@@ -1,8 +1,8 @@
 // All communication between the Next.js frontend and the FastAPI backend lives here.
 // Never call fetch() directly from a component — always go through this module.
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "https://novoo5-cadd-backend.hf.space";
-
+// NUCLEAR OVERRIDE: Hardcoded backend URL so Vercel can't cache localhost
+const BACKEND_URL = "https://novoo5-cadd-backend.hf.space";
 
 // ── Types (mirror backend Pydantic schemas) ───────────────────────────────────
 
