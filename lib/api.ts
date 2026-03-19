@@ -1,7 +1,8 @@
 // All communication between the Next.js frontend and the FastAPI backend lives here.
 // Never call fetch() directly from a component — always go through this module.
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "https://novoo5-cadd-backend.hf.space";
+
 
 // ── Types (mirror backend Pydantic schemas) ───────────────────────────────────
 
