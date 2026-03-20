@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Download, ArrowUpDown, Trophy } from "lucide-react";
+import { Download, ArrowUpDown, Trophy, BookOpen, X } from "lucide-react";
 import type { JobResultsResponse, CompoundResult } from "@/lib/api";
 import { getScoreColor, getAffinityColor } from "@/lib/api";
 import MoleculeCard from "./MoleculeCard";
@@ -12,9 +12,88 @@ interface ResultsTableProps {
 
 type SortKey = "rank" | "docking" | "admet" | "score";
 
+const SCORING_GUIDE = [
+    {
+        metric: "Overall Score (0–100)",
+        description: "A weighted composite of binding strength, safety, solubility, and synthesizability.",
+        ranges: [
+            { range: "80–100", label: "Exceptional", color: "text-emerald-400", note: "Ready for in-vitro testing" },
+            { range: "60–79", label: "Strong", color: "text-yellow-400", note: "Minor optimization needed" },
+            { range: "40–59", label: "Moderate", color: "text-orange-400", note: "Significant issues present" },
+            { range: "0–39", label: "Poor", color: "text-red-400", note: "Fails critical drug-like criteria" },
+        ],
+    },
+    {
+        metric: "Docking Affinity (kcal/mol)",
+        description: "How tightly the drug molecule binds to the target protein's active site. More negative = stronger binding. Calculated using AutoDock Vina molecular simulation.",
+        ranges: [
+            { range: "≤ −9.0", label: "Outstanding", color: "text-emerald-400", note: "Exceptionally strong binder" },
+            { range: "−7.0 to −8.9", label: "Strong", color: "text-emerald-400", note: "Good clinical candidate" },
+            { range: "−5.0 to −6.9", label: "Moderate", color: "text-yellow-400", note: "Needs optimization" },
+            { range: "> −5.0", label: "Weak", color: "text-red-400", note: "Poor to no binding" },
+        ],
+    },
+    {
+        metric: "Synthesis Complexity (SA Score)",
+        description: "How difficult and expensive it will be to manufacture this molecule in a lab. Based on the SA Score algorithm which analyses ring systems, stereocenters, and functional groups.",
+        ranges: [
+            { range: "< 15", label: "Very Easy", color: "text-emerald-400", note: "Cheap, 1–2 steps, standard reagents" },
+            { range: "15–25", label: "Moderate", color: "text-yellow-400", note: "Standard for most oral drugs" },
+            { range: "25–40", label: "Difficult", color: "text-orange-400", note: "Many steps, expensive reagents" },
+            { range: "> 40", label: "Infeasible", color: "text-red-400", note: "Practically unsynthesizable" },
+        ],
+    },
+    {
+        metric: "Aqueous Solubility (LogS)",
+        description: "How well the drug dissolves in water/blood. Poor solubility is a top reason drugs fail in clinical trials. Estimated using the ESOL (Delaney) model.",
+        ranges: [
+            { range: "> 0.0", label: "High", color: "text-emerald-400", note: "Dissolves freely in blood" },
+            { range: "0.0 to −2.0", label: "Medium", color: "text-yellow-400", note: "Adequate for most formulations" },
+            { range: "−2.0 to −4.0", label: "Low", color: "text-orange-400", note: "May need special formulation" },
+            { range: "< −4.0", label: "Very Low", color: "text-red-400", note: "High absorption failure risk" },
+        ],
+    },
+    {
+        metric: "hERG Inhibition",
+        description: "Probability the drug blocks the hERG potassium channel in the heart. This is the most common cause of fatal drug withdrawals from markets worldwide.",
+        ranges: [
+            { range: "< 30%", label: "Safe", color: "text-emerald-400", note: "No cardiac risk signal" },
+            { range: "30–50%", label: "Caution", color: "text-yellow-400", note: "Monitor in trials" },
+            { range: "> 50%", label: "High Risk", color: "text-red-400", note: "Likely cardiotoxic — avoid" },
+        ],
+    },
+    {
+        metric: "Hepatotoxicity",
+        description: "Probability the drug damages liver cells (hepatocytes). Liver toxicity is the #1 reason drugs are rejected by the FDA after Phase II trials.",
+        ranges: [
+            { range: "< 30%", label: "Safe", color: "text-emerald-400", note: "Low liver damage risk" },
+            { range: "30–50%", label: "Moderate Risk", color: "text-yellow-400", note: "Needs monitoring" },
+            { range: "> 50%", label: "Toxic", color: "text-red-400", note: "Likely hepatotoxic" },
+        ],
+    },
+    {
+        metric: "Oral Bioavailability",
+        description: "What percentage of the drug actually reaches the bloodstream after swallowing a pill. The rest is broken down before absorption.",
+        ranges: [
+            { range: "> 70%", label: "Excellent", color: "text-emerald-400", note: "Most drug reaches target" },
+            { range: "30–70%", label: "Moderate", color: "text-yellow-400", note: "Acceptable for most drugs" },
+            { range: "< 30%", label: "Poor", color: "text-red-400", note: "Drug barely absorbed orally" },
+        ],
+    },
+    {
+        metric: "Caco-2 Permeability",
+        description: "Measures how well the drug can pass through intestinal wall cells (modelled using human colon cells). A key predictor of whether a drug can be taken orally.",
+        ranges: [
+            { range: "> −5.15", label: "High Permeability", color: "text-emerald-400", note: "Crosses gut wall easily" },
+            { range: "< −5.15", label: "Low Permeability", color: "text-red-400", note: "Poorly absorbed from gut" },
+        ],
+    },
+];
+
 export default function ResultsTable({ results }: ResultsTableProps) {
     const [sortKey, setSortKey] = useState<SortKey>("rank");
     const [sortAsc, setSortAsc] = useState(true);
+    const [guideOpen, setGuideOpen] = useState(false);
 
     const handleSort = (key: SortKey) => {
         if (sortKey === key) { setSortAsc(!sortAsc); }
@@ -31,9 +110,10 @@ export default function ResultsTable({ results }: ResultsTableProps) {
     });
 
     const downloadCsv = () => {
+        // ✅ CNN Score column removed
         const headers = [
             "Rank", "SMILES", "Final Score", "MW", "LogP", "Solubility Class",
-            "ADMET Flags", "hERG", "Hepatotox", "Docking (kcal/mol)", "CNN Score", "Synthesis Steps", "Complexity"
+            "ADMET Flags", "hERG", "Hepatotox", "Docking (kcal/mol)", "Synthesis Steps", "Complexity"
         ];
         const rows = results.final_ranked_compounds.map((c) => [
             c.rank ?? "",
@@ -46,7 +126,7 @@ export default function ResultsTable({ results }: ResultsTableProps) {
             c.admet?.herg_inhibition.toFixed(3) ?? "",
             c.admet?.hepatotoxicity.toFixed(3) ?? "",
             c.docking?.best_affinity_kcal.toFixed(3) ?? "",
-            c.docking?.cnn_score.toFixed(3) ?? "",
+            // ✅ cnn_score row removed
             c.retrosynthesis?.num_steps ?? "",
             c.retrosynthesis?.complexity_score.toFixed(1) ?? "",
         ]);
@@ -63,8 +143,7 @@ export default function ResultsTable({ results }: ResultsTableProps) {
     const SortButton = ({ label, k }: { label: string; k: SortKey }) => (
         <button
             onClick={() => handleSort(k)}
-            className={`flex items-center gap-1 text-xs uppercase tracking-wider transition-colors ${sortKey === k ? "text-emerald-400" : "text-gray-500 hover:text-gray-300"
-                }`}
+            className={`flex items-center gap-1 text-xs uppercase tracking-wider transition-colors ${sortKey === k ? "text-emerald-400" : "text-gray-500 hover:text-gray-300"}`}
         >
             {label}
             <ArrowUpDown className="w-3 h-3" />
@@ -74,7 +153,7 @@ export default function ResultsTable({ results }: ResultsTableProps) {
     return (
         <div className="space-y-5">
 
-            {/* ── Stats summary ─────────────────────────────────────────────── */}
+            {/* ── Stats summary ──────────────────────────────────────────────── */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {[
                     { label: "Analogues Generated", value: results.total_analogues_generated },
@@ -89,7 +168,7 @@ export default function ResultsTable({ results }: ResultsTableProps) {
                 ))}
             </div>
 
-            {/* ── Top compound highlight ────────────────────────────────────── */}
+            {/* ── Top compound highlight ──────────────────────────────────────── */}
             {sorted[0] && (
                 <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-950/40 to-teal-950/30 border border-emerald-800/40">
                     <div className="flex items-center gap-2 mb-1">
@@ -115,7 +194,7 @@ export default function ResultsTable({ results }: ResultsTableProps) {
                 </div>
             )}
 
-            {/* ── Sort controls + download ──────────────────────────────────── */}
+            {/* ── Sort controls + actions ─────────────────────────────────────── */}
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
                     <span className="text-xs text-gray-600">Sort by:</span>
@@ -124,13 +203,22 @@ export default function ResultsTable({ results }: ResultsTableProps) {
                     <SortButton label="Docking" k="docking" />
                     <SortButton label="ADMET" k="admet" />
                 </div>
-                <button onClick={downloadCsv} className="btn-secondary text-xs py-1.5 px-3">
-                    <Download className="w-3.5 h-3.5" />
-                    Export CSV
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => setGuideOpen(true)}
+                        className="btn-secondary text-xs py-1.5 px-3"
+                    >
+                        <BookOpen className="w-3.5 h-3.5" />
+                        Scoring Guide
+                    </button>
+                    <button onClick={downloadCsv} className="btn-secondary text-xs py-1.5 px-3">
+                        <Download className="w-3.5 h-3.5" />
+                        Export CSV
+                    </button>
+                </div>
             </div>
 
-            {/* ── Compound cards ────────────────────────────────────────────── */}
+            {/* ── Compound cards ──────────────────────────────────────────────── */}
             <div className="space-y-3">
                 {sorted.map((compound, i) => (
                     <MoleculeCard
@@ -141,6 +229,53 @@ export default function ResultsTable({ results }: ResultsTableProps) {
                     />
                 ))}
             </div>
+
+            {/* ── Scoring Guide Modal ─────────────────────────────────────────── */}
+            {guideOpen && (
+                <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 backdrop-blur-sm p-4 overflow-y-auto">
+                    <div className="relative w-full max-w-2xl bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl my-8">
+                        {/* Header */}
+                        <div className="flex items-center justify-between p-5 border-b border-gray-800">
+                            <div className="flex items-center gap-2">
+                                <BookOpen className="w-4 h-4 text-emerald-400" />
+                                <h2 className="text-sm font-semibold text-gray-100">Scoring Guide</h2>
+                            </div>
+                            <button
+                                onClick={() => setGuideOpen(false)}
+                                className="text-gray-600 hover:text-gray-400 transition-colors"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+
+                        {/* Intro */}
+                        <div className="px-5 pt-4 pb-2">
+                            <p className="text-xs text-gray-500 leading-relaxed">
+                                This pipeline evaluates drug candidates across multiple dimensions. Below is a plain-English explanation of every metric and what the values mean for drug viability.
+                            </p>
+                        </div>
+
+                        {/* Metrics */}
+                        <div className="px-5 pb-5 space-y-5">
+                            {SCORING_GUIDE.map((item) => (
+                                <div key={item.metric} className="p-4 rounded-xl bg-gray-800/50 border border-gray-700/50">
+                                    <p className="text-sm font-medium text-gray-200 mb-1">{item.metric}</p>
+                                    <p className="text-xs text-gray-500 mb-3 leading-relaxed">{item.description}</p>
+                                    <div className="space-y-1.5">
+                                        {item.ranges.map((r) => (
+                                            <div key={r.range} className="flex items-center gap-3 text-xs">
+                                                <span className="font-mono text-gray-400 w-24 flex-shrink-0">{r.range}</span>
+                                                <span className={`font-medium w-24 flex-shrink-0 ${r.color}`}>{r.label}</span>
+                                                <span className="text-gray-600">{r.note}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
