@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronUp, Info } from "lucide-react";
+import { ChevronDown, ChevronUp, Info, Zap } from "lucide-react";  // ← added Zap
 import type {
     PipelineSteps,
     DockingSpeed,
@@ -9,6 +9,7 @@ import type {
     BindingSiteCoords,
     BindingSiteResidues,
 } from "@/lib/api";
+
 
 interface AdvancedSettingsProps {
     numanalogues: 10 | 25 | 50;
@@ -23,7 +24,10 @@ interface AdvancedSettingsProps {
     onBindingSiteCoordsChange: (v: BindingSiteCoords) => void;
     bindingSiteResidues: BindingSiteResidues;
     onBindingSiteResiduesChange: (v: BindingSiteResidues) => void;
+    directScoreOnly: boolean;            // ← NEW
+    onDirectScoreOnlyChange: (v: boolean) => void;  // ← NEW
 }
+
 
 export default function AdvancedSettings({
     numanalogues,
@@ -38,11 +42,13 @@ export default function AdvancedSettings({
     onBindingSiteCoordsChange,
     bindingSiteResidues,
     onBindingSiteResiduesChange,
+    directScoreOnly,           // ← NEW
+    onDirectScoreOnlyChange,   // ← NEW
 }: AdvancedSettingsProps) {
     const [open, setOpen] = useState(false);
 
     const toggleStep = (key: keyof PipelineSteps) => {
-        if (key === "drug_likeness") return; // always locked ON
+        if (key === "drug_likeness") return;
         onPipelineStepsChange({ ...pipelineSteps, [key]: !pipelineSteps[key] });
     };
 
@@ -70,6 +76,13 @@ export default function AdvancedSettings({
                 <span className="flex items-center gap-2">
                     <span className="text-gray-500">⚙</span>
                     Advanced Settings
+                    {/* ← NEW: show badge when direct mode is active */}
+                    {directScoreOnly && (
+                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-violet-900/50 border border-violet-700 text-violet-300">
+                            <Zap className="w-2.5 h-2.5" />
+                            Direct Score
+                        </span>
+                    )}
                 </span>
                 {open ? (
                     <ChevronUp className="w-4 h-4 text-gray-500" />
@@ -81,10 +94,42 @@ export default function AdvancedSettings({
             {open && (
                 <div className="mt-5 space-y-6 animate-slide-up">
 
-                    {/* ── Number of analogues ─────────────────────────────────────── */}
-                    <div>
+                    {/* ── NEW: Direct Score Mode toggle ───────────────────────── */}
+                    <div className={`p-3 rounded-xl border transition-all ${directScoreOnly
+                            ? "bg-violet-950/30 border-violet-700"
+                            : "bg-gray-800/30 border-gray-800"
+                        }`}>
+                        <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-start gap-2">
+                                <Zap className={`w-4 h-4 mt-0.5 flex-shrink-0 ${directScoreOnly ? "text-violet-400" : "text-gray-500"}`} />
+                                <div>
+                                    <p className="text-sm font-medium text-gray-200">Direct Score Mode</p>
+                                    <p className="text-xs text-gray-500 mt-0.5">
+                                        Skip analogue generation — score your input SMILES directly through the full pipeline. Ideal for benchmarking known compounds.
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => onDirectScoreOnlyChange(!directScoreOnly)}
+                                className={`w-9 h-5 rounded-full relative transition-colors flex-shrink-0 ${directScoreOnly ? "bg-violet-600" : "bg-gray-700"
+                                    }`}
+                            >
+                                <span
+                                    className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${directScoreOnly ? "translate-x-4" : "translate-x-0.5"
+                                        }`}
+                                />
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* ── Number of analogues ─────────────────────────────────── */}
+                    <div className={directScoreOnly ? "opacity-40 pointer-events-none" : ""}>
                         <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
                             Analogues to Generate
+                            {directScoreOnly && (
+                                <span className="ml-2 normal-case text-violet-400 font-normal">disabled in direct mode</span>
+                            )}
                         </label>
                         <div className="flex gap-2">
                             {([10, 25, 50] as const).map((n) => (
@@ -106,7 +151,7 @@ export default function AdvancedSettings({
                         </p>
                     </div>
 
-                    {/* ── Pipeline steps toggles ───────────────────────────────────── */}
+                    {/* ── Pipeline steps toggles ───────────────────────────────── */}
                     <div>
                         <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
                             Pipeline Steps
@@ -146,7 +191,7 @@ export default function AdvancedSettings({
                         </div>
                     </div>
 
-                    {/* ── Docking speed ────────────────────────────────────────────── */}
+                    {/* ── Docking speed ────────────────────────────────────────── */}
                     {pipelineSteps.docking && (
                         <div>
                             <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
@@ -171,7 +216,7 @@ export default function AdvancedSettings({
                         </div>
                     )}
 
-                    {/* ── Binding site ─────────────────────────────────────────────── */}
+                    {/* ── Binding site ─────────────────────────────────────────── */}
                     {pipelineSteps.docking && (
                         <div>
                             <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">

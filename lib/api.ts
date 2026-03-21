@@ -3,12 +3,14 @@
 
 const BACKEND_URL = "https://novoo5-cadd-backend.hf.space";
 
+
 // ── Types (mirror backend Pydantic schemas) ───────────────────────────────────
 
 export type DockingSpeed = "fast" | "balanced" | "thorough";
 export type BindingSiteMode = "auto" | "coordinates" | "residues";
 export type StepStatus = "waiting" | "running" | "done" | "skipped" | "failed";
 export type JobStatus = "queued" | "running" | "done" | "failed";
+
 
 export interface PipelineSteps {
     drug_likeness: boolean;
@@ -18,6 +20,7 @@ export interface PipelineSteps {
     retrosynthesis: boolean;
 }
 
+
 export interface BindingSiteCoords {
     x: number;
     y: number;
@@ -25,23 +28,27 @@ export interface BindingSiteCoords {
     box_size: number;
 }
 
+
 export interface BindingSiteResidues {
     chain: string;
     residue_start: number;
     residue_end: number;
 }
 
+
 export interface JobRequest {
     smiles: string;
     pdb_id?: string;
     pdb_content?: string;
-    num_analogues: 10 | 25 | 50;
+    num_analogues: 0 | 10 | 25 | 50;   // ← CHANGED: added 0
+    direct_score_only?: boolean;         // ← NEW
     pipeline_steps: PipelineSteps;
     binding_site_mode: BindingSiteMode;
     binding_site_coords?: BindingSiteCoords;
     binding_site_residues?: BindingSiteResidues;
     docking_speed: DockingSpeed;
 }
+
 
 export interface JobSubmitResponse {
     job_id: string;
@@ -50,12 +57,14 @@ export interface JobSubmitResponse {
     results_url: string;
 }
 
+
 export interface PipelineStepInfo {
     name: string;
     status: StepStatus;
     message?: string;
     duration_seconds?: number;
 }
+
 
 export interface JobStatusResponse {
     job_id: string;
@@ -65,6 +74,7 @@ export interface JobStatusResponse {
     steps: PipelineStepInfo[];
     error?: string;
 }
+
 
 export interface LipinskiResult {
     passed: boolean;
@@ -76,6 +86,7 @@ export interface LipinskiResult {
     solubility_class: string;
 }
 
+
 export interface ADMETResult {
     passed: boolean;
     herg_inhibition: number;
@@ -86,11 +97,13 @@ export interface ADMETResult {
     flags: string[];
 }
 
+
 export interface BindingPrefilterResult {
     passed: boolean;
     predicted_affinity_kcal: number;
     confidence: number;
 }
+
 
 export interface DockingPose {
     rank: number;
@@ -99,12 +112,14 @@ export interface DockingPose {
     rmsd_ub: number;
 }
 
+
 export interface DockingResult {
     passed: boolean;
     best_affinity_kcal: number;
     cnn_score: number;
     poses: DockingPose[];
 }
+
 
 export interface RetrosynthesisStep {
     step_number: number;
@@ -113,12 +128,14 @@ export interface RetrosynthesisStep {
     confidence: number;
 }
 
+
 export interface RetrosynthesisResult {
     feasible: boolean;
     num_steps: number;
     route: RetrosynthesisStep[];
     complexity_score: number;
 }
+
 
 export interface CompoundResult {
     smiles: string;
@@ -132,6 +149,7 @@ export interface CompoundResult {
     retrosynthesis?: RetrosynthesisResult;
 }
 
+
 export interface BindingSiteInfo {
     detection_mode: "native_ligand" | "protein_centroid" | "user_coordinates" | "user_residues";
     detected_ligand_name: string | null;
@@ -140,6 +158,7 @@ export interface BindingSiteInfo {
     center_z: number;
     box_size: number;
 }
+
 
 export interface JobResultsResponse {
     job_id: string;
@@ -155,11 +174,13 @@ export interface JobResultsResponse {
     completed_at: string;
 }
 
+
 export interface ScoreBreakdownItem {
     raw: string;
     contribution: number;
     max_possible: number;
 }
+
 
 export interface ScoreBreakdown {
     docking_affinity?: ScoreBreakdownItem;
@@ -170,7 +191,9 @@ export interface ScoreBreakdown {
     final_score?: number;
 }
 
+
 // ── API functions ─────────────────────────────────────────────────────────────
+
 
 export async function submitJob(request: JobRequest): Promise<JobSubmitResponse> {
     const response = await fetch(`${BACKEND_URL}/api/v1/jobs`, {
@@ -185,14 +208,16 @@ export async function submitJob(request: JobRequest): Promise<JobSubmitResponse>
     return response.json();
 }
 
+
 export async function submitJobWithFile(
     smiles: string,
     pdbFile: File,
     options: {
-        num_analogues: 10 | 25 | 50;
+        num_analogues: 0 | 10 | 25 | 50;   // ← CHANGED: added 0
         docking_speed: DockingSpeed;
         binding_site_mode: BindingSiteMode;
-        pipeline_steps: PipelineSteps;  // ✅ ADDED
+        pipeline_steps: PipelineSteps;
+        direct_score_only?: boolean;         // ← NEW
     }
 ): Promise<JobSubmitResponse> {
     const formData = new FormData();
@@ -201,7 +226,8 @@ export async function submitJobWithFile(
     formData.append("num_analogues", String(options.num_analogues));
     formData.append("docking_speed", options.docking_speed);
     formData.append("binding_site_mode", options.binding_site_mode);
-    formData.append("pipeline_steps", JSON.stringify(options.pipeline_steps));  // ✅ ADDED
+    formData.append("pipeline_steps", JSON.stringify(options.pipeline_steps));
+    formData.append("direct_score_only", String(options.direct_score_only ?? false));  // ← NEW
 
     const response = await fetch(`${BACKEND_URL}/api/v1/jobs/upload`, {
         method: "POST",
@@ -214,6 +240,7 @@ export async function submitJobWithFile(
     return response.json();
 }
 
+
 export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
     const response = await fetch(`${BACKEND_URL}/api/v1/jobs/${jobId}/status`, {
         cache: "no-store",
@@ -224,6 +251,7 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
     }
     return response.json();
 }
+
 
 export async function getJobResults(jobId: string): Promise<JobResultsResponse | null> {
     const response = await fetch(`${BACKEND_URL}/api/v1/jobs/${jobId}/results`, {
@@ -237,6 +265,7 @@ export async function getJobResults(jobId: string): Promise<JobResultsResponse |
     return response.json();
 }
 
+
 export async function getScoreBreakdown(
     jobId: string,
     compoundIndex: number
@@ -249,6 +278,7 @@ export async function getScoreBreakdown(
     return response.json();
 }
 
+
 export async function pingBackend(): Promise<boolean> {
     try {
         const response = await fetch(`${BACKEND_URL}/api/v1/health/ping`, {
@@ -260,6 +290,7 @@ export async function pingBackend(): Promise<boolean> {
         return false;
     }
 }
+
 
 export async function fetchPdbMetadata(
     pdbId: string
@@ -295,7 +326,9 @@ export async function fetchPdbMetadata(
     }
 }
 
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 export function getScoreColor(score: number): string {
     if (score >= 70) return "text-emerald-400";
@@ -303,15 +336,18 @@ export function getScoreColor(score: number): string {
     return "text-red-400";
 }
 
+
 export function getAffinityColor(affinity: number): string {
     if (affinity <= -8.0) return "text-emerald-400";
     if (affinity <= -6.0) return "text-yellow-400";
     return "text-red-400";
 }
 
+
 export function formatProbability(value: number): string {
     return `${(value * 100).toFixed(1)}%`;
 }
+
 
 export function formatDuration(seconds: number): string {
     if (seconds < 60) return `${seconds.toFixed(1)}s`;

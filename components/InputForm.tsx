@@ -13,7 +13,9 @@ import {
     type BindingSiteCoords, type BindingSiteResidues,
 } from "@/lib/api";
 
+
 const MYRICETIN_SMILES = "OC1=C(O)C(=CC(=C1)C1=C(O)C(=O)C2=CC(O)=CC(O)=C12)O";
+
 
 export default function InputForm() {
     const router = useRouter();
@@ -30,6 +32,7 @@ export default function InputForm() {
 
     // Advanced settings state
     const [numanalogues, setNumanalogues] = useState<10 | 25 | 50>(25);
+    const [directScoreOnly, setDirectScoreOnly] = useState(false);  // ← NEW
     const [pipelineSteps, setPipelineSteps] = useState<PipelineSteps>({
         drug_likeness: true, admet: true, binding_prefilter: true,
         docking: true, retrosynthesis: true,
@@ -88,16 +91,18 @@ export default function InputForm() {
             let response;
             if (pdbMode === "file" && pdbFile) {
                 response = await submitJobWithFile(smiles, pdbFile, {
-                    num_analogues: numanalogues,
+                    num_analogues: directScoreOnly ? 0 : numanalogues,  // ← CHANGED
                     docking_speed: dockingSpeed,
                     binding_site_mode: bindingSiteMode,
-                    pipeline_steps: pipelineSteps,  // ✅ ADDED
+                    pipeline_steps: pipelineSteps,
+                    direct_score_only: directScoreOnly,                  // ← NEW
                 });
             } else {
                 response = await submitJob({
                     smiles,
                     pdb_id: pdbId.toUpperCase(),
-                    num_analogues: numanalogues,
+                    num_analogues: directScoreOnly ? 0 : numanalogues,  // ← CHANGED
+                    direct_score_only: directScoreOnly,                  // ← NEW
                     pipeline_steps: pipelineSteps,
                     binding_site_mode: bindingSiteMode,
                     binding_site_coords: bindingSiteMode === "coordinates" ? bindingSiteCoords : undefined,
@@ -136,7 +141,10 @@ export default function InputForm() {
                     <span className="ml-2 text-xs text-gray-500 font-normal">required</span>
                 </label>
                 <p className="text-xs text-gray-500 mb-3">
-                    Enter the SMILES string of your base compound. Analogues will be generated from this scaffold.
+                    {directScoreOnly
+                        ? "This exact compound will be scored through the full pipeline — no analogues generated."
+                        : "Enter the SMILES string of your base compound. Analogues will be generated from this scaffold."
+                    }
                 </p>
                 <div className="relative">
                     <textarea
@@ -194,8 +202,8 @@ export default function InputForm() {
                             type="button"
                             onClick={() => setPdbMode(mode)}
                             className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${pdbMode === mode
-                                ? "bg-gray-700 text-gray-100"
-                                : "text-gray-500 hover:text-gray-300"
+                                    ? "bg-gray-700 text-gray-100"
+                                    : "text-gray-500 hover:text-gray-300"
                                 }`}
                         >
                             {mode === "id" ? "PDB ID" : "Upload File"}
@@ -223,7 +231,6 @@ export default function InputForm() {
                             )}
                         </div>
 
-                        {/* Protein metadata card */}
                         {pdbMeta && (
                             <div className="mt-2 p-3 rounded-lg bg-emerald-950/20 border border-emerald-900/40 animate-slide-up">
                                 <p className="text-sm text-emerald-300 font-medium truncate">{pdbMeta.title}</p>
@@ -262,8 +269,8 @@ export default function InputForm() {
                         <div
                             onClick={() => fileInputRef.current?.click()}
                             className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${pdbFile
-                                ? "border-emerald-700 bg-emerald-950/20"
-                                : "border-gray-700 hover:border-gray-600 bg-gray-800/20"
+                                    ? "border-emerald-700 bg-emerald-950/20"
+                                    : "border-gray-700 hover:border-gray-600 bg-gray-800/20"
                                 }`}
                         >
                             <input
@@ -306,6 +313,8 @@ export default function InputForm() {
             <AdvancedSettings
                 numanalogues={numanalogues}
                 onNumAnaloguesChange={setNumanalogues}
+                directScoreOnly={directScoreOnly}           // ← NEW
+                onDirectScoreOnlyChange={setDirectScoreOnly} // ← NEW
                 pipelineSteps={pipelineSteps}
                 onPipelineStepsChange={setPipelineSteps}
                 dockingSpeed={dockingSpeed}
@@ -337,6 +346,11 @@ export default function InputForm() {
                         <Loader2 className="w-5 h-5 animate-spin" />
                         Submitting pipeline job...
                     </>
+                ) : directScoreOnly ? (
+                    <>
+                        <FlaskConical className="w-5 h-5" />
+                        Score This Compound Directly
+                    </>
                 ) : (
                     <>
                         <FlaskConical className="w-5 h-5" />
@@ -346,7 +360,10 @@ export default function InputForm() {
             </button>
 
             <p className="text-xs text-gray-600 text-center">
-                Pipeline takes 30–60 minutes depending on settings. You'll get a tracking URL immediately.
+                {directScoreOnly
+                    ? "Direct scoring skips analogue generation — results in ~5–15 minutes."
+                    : "Pipeline takes 30–60 minutes depending on settings. You'll get a tracking URL immediately."
+                }
             </p>
         </form>
     );
