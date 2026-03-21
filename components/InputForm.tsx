@@ -91,6 +91,7 @@ export default function InputForm() {
                     num_analogues: numanalogues,
                     docking_speed: dockingSpeed,
                     binding_site_mode: bindingSiteMode,
+                    pipeline_steps: pipelineSteps,  // ✅ ADDED
                 });
             } else {
                 response = await submitJob({
@@ -193,8 +194,8 @@ export default function InputForm() {
                             type="button"
                             onClick={() => setPdbMode(mode)}
                             className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${pdbMode === mode
-                                    ? "bg-gray-700 text-gray-100"
-                                    : "text-gray-500 hover:text-gray-300"
+                                ? "bg-gray-700 text-gray-100"
+                                : "text-gray-500 hover:text-gray-300"
                                 }`}
                         >
                             {mode === "id" ? "PDB ID" : "Upload File"}
@@ -261,8 +262,8 @@ export default function InputForm() {
                         <div
                             onClick={() => fileInputRef.current?.click()}
                             className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${pdbFile
-                                    ? "border-emerald-700 bg-emerald-950/20"
-                                    : "border-gray-700 hover:border-gray-600 bg-gray-800/20"
+                                ? "border-emerald-700 bg-emerald-950/20"
+                                : "border-gray-700 hover:border-gray-600 bg-gray-800/20"
                                 }`}
                         >
                             <input

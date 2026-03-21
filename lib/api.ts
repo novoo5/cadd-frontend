@@ -132,7 +132,6 @@ export interface CompoundResult {
     retrosynthesis?: RetrosynthesisResult;
 }
 
-// ✅ NEW — mirrors backend BindingSiteInfo schema
 export interface BindingSiteInfo {
     detection_mode: "native_ligand" | "protein_centroid" | "user_coordinates" | "user_residues";
     detected_ligand_name: string | null;
@@ -151,7 +150,7 @@ export interface JobResultsResponse {
     compounds_after_prefilter: number;
     compounds_docked: number;
     final_ranked_compounds: CompoundResult[];
-    binding_site_info?: BindingSiteInfo | null;  // ✅ NEW
+    binding_site_info?: BindingSiteInfo | null;
     created_at: string;
     completed_at: string;
 }
@@ -193,6 +192,7 @@ export async function submitJobWithFile(
         num_analogues: 10 | 25 | 50;
         docking_speed: DockingSpeed;
         binding_site_mode: BindingSiteMode;
+        pipeline_steps: PipelineSteps;  // ✅ ADDED
     }
 ): Promise<JobSubmitResponse> {
     const formData = new FormData();
@@ -201,6 +201,7 @@ export async function submitJobWithFile(
     formData.append("num_analogues", String(options.num_analogues));
     formData.append("docking_speed", options.docking_speed);
     formData.append("binding_site_mode", options.binding_site_mode);
+    formData.append("pipeline_steps", JSON.stringify(options.pipeline_steps));  // ✅ ADDED
 
     const response = await fetch(`${BACKEND_URL}/api/v1/jobs/upload`, {
         method: "POST",
