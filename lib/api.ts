@@ -1,7 +1,6 @@
 // All communication between the Next.js frontend and the FastAPI backend lives here.
 // Never call fetch() directly from a component — always go through this module.
 
-// NUCLEAR OVERRIDE: Hardcoded backend URL so Vercel can't cache localhost
 const BACKEND_URL = "https://novoo5-cadd-backend.hf.space";
 
 // ── Types (mirror backend Pydantic schemas) ───────────────────────────────────
@@ -133,6 +132,16 @@ export interface CompoundResult {
     retrosynthesis?: RetrosynthesisResult;
 }
 
+// ✅ NEW — mirrors backend BindingSiteInfo schema
+export interface BindingSiteInfo {
+    detection_mode: "native_ligand" | "protein_centroid" | "user_coordinates" | "user_residues";
+    detected_ligand_name: string | null;
+    center_x: number;
+    center_y: number;
+    center_z: number;
+    box_size: number;
+}
+
 export interface JobResultsResponse {
     job_id: string;
     base_smiles: string;
@@ -142,6 +151,7 @@ export interface JobResultsResponse {
     compounds_after_prefilter: number;
     compounds_docked: number;
     final_ranked_compounds: CompoundResult[];
+    binding_site_info?: BindingSiteInfo | null;  // ✅ NEW
     created_at: string;
     completed_at: string;
 }
@@ -163,29 +173,19 @@ export interface ScoreBreakdown {
 
 // ── API functions ─────────────────────────────────────────────────────────────
 
-/**
- * Submits a pipeline job via JSON body (PDB ID mode).
- */
 export async function submitJob(request: JobRequest): Promise<JobSubmitResponse> {
     const response = await fetch(`${BACKEND_URL}/api/v1/jobs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(request),
     });
-
     if (!response.ok) {
         const error = await response.json().catch(() => ({}));
-        throw new Error(
-            error?.detail || `Job submission failed with status ${response.status}`
-        );
+        throw new Error(error?.detail || `Job submission failed with status ${response.status}`);
     }
-
     return response.json();
 }
 
-/**
- * Submits a pipeline job via multipart form (file upload mode).
- */
 export async function submitJobWithFile(
     smiles: string,
     pdbFile: File,
@@ -206,58 +206,36 @@ export async function submitJobWithFile(
         method: "POST",
         body: formData,
     });
-
     if (!response.ok) {
         const error = await response.json().catch(() => ({}));
-        throw new Error(
-            error?.detail || `File upload failed with status ${response.status}`
-        );
+        throw new Error(error?.detail || `File upload failed with status ${response.status}`);
     }
-
     return response.json();
 }
 
-/**
- * Polls job status. Call this every 8 seconds from the status page.
- */
 export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
     const response = await fetch(`${BACKEND_URL}/api/v1/jobs/${jobId}/status`, {
         cache: "no-store",
     });
-
     if (!response.ok) {
-        if (response.status === 404) {
-            throw new Error(`Job '${jobId}' not found. It may have expired.`);
-        }
+        if (response.status === 404) throw new Error(`Job '${jobId}' not found. It may have expired.`);
         throw new Error(`Status fetch failed: HTTP ${response.status}`);
     }
-
     return response.json();
 }
 
-/**
- * Fetches final results. Only call once status === "done".
- * Returns null if job is still running (202 response).
- */
-export async function getJobResults(
-    jobId: string
-): Promise<JobResultsResponse | null> {
+export async function getJobResults(jobId: string): Promise<JobResultsResponse | null> {
     const response = await fetch(`${BACKEND_URL}/api/v1/jobs/${jobId}/results`, {
         cache: "no-store",
     });
-
-    if (response.status === 202) return null; // still running
+    if (response.status === 202) return null;
     if (!response.ok) {
         const error = await response.json().catch(() => ({}));
         throw new Error(error?.detail || `Results fetch failed: HTTP ${response.status}`);
     }
-
     return response.json();
 }
 
-/**
- * Fetches detailed score breakdown for a specific compound by index.
- */
 export async function getScoreBreakdown(
     jobId: string,
     compoundIndex: number
@@ -266,18 +244,10 @@ export async function getScoreBreakdown(
         `${BACKEND_URL}/api/v1/jobs/${jobId}/score-breakdown/${compoundIndex}`,
         { cache: "no-store" }
     );
-
-    if (!response.ok) {
-        throw new Error(`Score breakdown fetch failed: HTTP ${response.status}`);
-    }
-
+    if (!response.ok) throw new Error(`Score breakdown fetch failed: HTTP ${response.status}`);
     return response.json();
 }
 
-/**
- * Lightweight ping to check if backend is awake before submitting.
- * Returns true if backend responds, false if sleeping/down.
- */
 export async function pingBackend(): Promise<boolean> {
     try {
         const response = await fetch(`${BACKEND_URL}/api/v1/health/ping`, {
@@ -290,15 +260,10 @@ export async function pingBackend(): Promise<boolean> {
     }
 }
 
-/**
- * Fetches PDB metadata from the backend (which calls RCSB GraphQL).
- * Used to show protein name/resolution after user types a PDB ID.
- */
 export async function fetchPdbMetadata(
     pdbId: string
 ): Promise<{ title: string; resolution_angstrom: number | null; protein_chains: number } | null> {
     try {
-        // We call RCSB directly from the frontend for metadata (no backend needed)
         const query = `
     {
       entry(entry_id: "${pdbId.toUpperCase()}") {
@@ -309,19 +274,16 @@ export async function fetchPdbMetadata(
         }
       }
     }`;
-
         const response = await fetch("https://data.rcsb.org/graphql", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ query }),
             signal: AbortSignal.timeout(8000),
         });
-
         if (!response.ok) return null;
         const data = await response.json();
         const entry = data?.data?.entry;
         if (!entry) return null;
-
         return {
             title: entry.struct?.title || "Unknown protein",
             resolution_angstrom: entry.rcsb_entry_info?.resolution_combined?.[0] || null,
@@ -334,26 +296,22 @@ export async function fetchPdbMetadata(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Returns CSS color class based on a score 0–100 */
 export function getScoreColor(score: number): string {
     if (score >= 70) return "text-emerald-400";
     if (score >= 45) return "text-yellow-400";
     return "text-red-400";
 }
 
-/** Returns CSS color class based on a docking affinity (kcal/mol) */
 export function getAffinityColor(affinity: number): string {
     if (affinity <= -8.0) return "text-emerald-400";
     if (affinity <= -6.0) return "text-yellow-400";
     return "text-red-400";
 }
 
-/** Formats a probability (0–1) as a colored percentage label */
 export function formatProbability(value: number): string {
     return `${(value * 100).toFixed(1)}%`;
 }
 
-/** Formats elapsed seconds into a human-readable string */
 export function formatDuration(seconds: number): string {
     if (seconds < 60) return `${seconds.toFixed(1)}s`;
     const mins = Math.floor(seconds / 60);
