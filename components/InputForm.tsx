@@ -13,14 +13,12 @@ import {
     type BindingSiteCoords, type BindingSiteResidues,
 } from "@/lib/api";
 
-
 const MYRICETIN_SMILES = "OC1=C(O)C(=CC(=C1)C1=C(O)C(=O)C2=CC(O)=CC(O)=C12)O";
-
 
 export default function InputForm() {
     const router = useRouter();
 
-    // ── Form state ────────────────────────────────────────────────────────────
+    // Form state
     const [smiles, setSmiles] = useState(MYRICETIN_SMILES);
     const [pdbMode, setPdbMode] = useState<"id" | "file">("id");
     const [pdbId, setPdbId] = useState("");
@@ -32,7 +30,7 @@ export default function InputForm() {
 
     // Advanced settings state
     const [numanalogues, setNumanalogues] = useState<10 | 25 | 50>(25);
-    const [directScoreOnly, setDirectScoreOnly] = useState(false);  // ← NEW
+    const [directScoreOnly, setDirectScoreOnly] = useState(false);
     const [pipelineSteps, setPipelineSteps] = useState<PipelineSteps>({
         drug_likeness: true, admet: true, binding_prefilter: true,
         docking: true, retrosynthesis: true,
@@ -45,8 +43,10 @@ export default function InputForm() {
     const [bindingSiteResidues, setBindingSiteResidues] = useState<BindingSiteResidues>({
         chain: "A", residue_start: 1, residue_end: 100,
     });
+    const [mwMin, setMwMin] = useState(200);
+    const [mwMax, setMwMax] = useState(500);
 
-    // ── Submission state ──────────────────────────────────────────────────────
+    // Submission state
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [backendAwake, setBackendAwake] = useState<boolean | null>(null);
@@ -54,12 +54,10 @@ export default function InputForm() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const pdbDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // ── Check backend on mount ────────────────────────────────────────────────
     useEffect(() => {
         pingBackend().then(setBackendAwake);
     }, []);
 
-    // ── Auto-fetch PDB metadata while user types PDB ID ───────────────────────
     useEffect(() => {
         if (pdbDebounceRef.current) clearTimeout(pdbDebounceRef.current);
         setPdbMeta(null);
@@ -73,7 +71,6 @@ export default function InputForm() {
         }, 600);
     }, [pdbId]);
 
-    // ── Submit handler ────────────────────────────────────────────────────────
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError(null);
@@ -91,23 +88,27 @@ export default function InputForm() {
             let response;
             if (pdbMode === "file" && pdbFile) {
                 response = await submitJobWithFile(smiles, pdbFile, {
-                    num_analogues: directScoreOnly ? 0 : numanalogues,  // ← CHANGED
+                    num_analogues: directScoreOnly ? 0 : numanalogues,
                     docking_speed: dockingSpeed,
                     binding_site_mode: bindingSiteMode,
                     pipeline_steps: pipelineSteps,
-                    direct_score_only: directScoreOnly,                  // ← NEW
+                    direct_score_only: directScoreOnly,
+                    mw_min: mwMin,
+                    mw_max: mwMax,
                 });
             } else {
                 response = await submitJob({
                     smiles,
                     pdb_id: pdbId.toUpperCase(),
-                    num_analogues: directScoreOnly ? 0 : numanalogues,  // ← CHANGED
-                    direct_score_only: directScoreOnly,                  // ← NEW
+                    num_analogues: directScoreOnly ? 0 : numanalogues,
+                    direct_score_only: directScoreOnly,
                     pipeline_steps: pipelineSteps,
                     binding_site_mode: bindingSiteMode,
                     binding_site_coords: bindingSiteMode === "coordinates" ? bindingSiteCoords : undefined,
                     binding_site_residues: bindingSiteMode === "residues" ? bindingSiteResidues : undefined,
                     docking_speed: dockingSpeed,
+                    mw_min: mwMin,
+                    mw_max: mwMax,
                 });
             }
             router.push(`/status/${response.job_id}`);
@@ -120,7 +121,7 @@ export default function InputForm() {
     return (
         <form onSubmit={handleSubmit} className="space-y-6">
 
-            {/* ── Backend status banner ──────────────────────────────────────── */}
+            {/* Backend status banner */}
             {backendAwake === false && (
                 <div className="flex items-start gap-3 p-4 rounded-xl bg-yellow-950/30 border border-yellow-800/50">
                     <AlertCircle className="w-4 h-4 text-yellow-400 mt-0.5 flex-shrink-0" />
@@ -134,7 +135,7 @@ export default function InputForm() {
                 </div>
             )}
 
-            {/* ── SMILES input ───────────────────────────────────────────────── */}
+            {/* SMILES input */}
             <div className="card">
                 <label className="block text-sm font-medium text-gray-300 mb-1">
                     Base Compound (SMILES)
@@ -184,7 +185,7 @@ export default function InputForm() {
                 </div>
             </div>
 
-            {/* ── Target Protein ─────────────────────────────────────────────── */}
+            {/* Target Protein */}
             <div className="card">
                 <label className="block text-sm font-medium text-gray-300 mb-1">
                     Target Protein
@@ -194,7 +195,6 @@ export default function InputForm() {
                     Provide the protein structure to dock against.
                 </p>
 
-                {/* Tab switcher */}
                 <div className="flex gap-1 p-1 bg-gray-800 rounded-lg w-fit mb-4">
                     {(["id", "file"] as const).map((mode) => (
                         <button
@@ -202,8 +202,8 @@ export default function InputForm() {
                             type="button"
                             onClick={() => setPdbMode(mode)}
                             className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${pdbMode === mode
-                                    ? "bg-gray-700 text-gray-100"
-                                    : "text-gray-500 hover:text-gray-300"
+                                ? "bg-gray-700 text-gray-100"
+                                : "text-gray-500 hover:text-gray-300"
                                 }`}
                         >
                             {mode === "id" ? "PDB ID" : "Upload File"}
@@ -211,7 +211,6 @@ export default function InputForm() {
                     ))}
                 </div>
 
-                {/* PDB ID mode */}
                 {pdbMode === "id" && (
                     <div>
                         <div className="relative">
@@ -263,14 +262,13 @@ export default function InputForm() {
                     </div>
                 )}
 
-                {/* File upload mode */}
                 {pdbMode === "file" && (
                     <div>
                         <div
                             onClick={() => fileInputRef.current?.click()}
                             className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${pdbFile
-                                    ? "border-emerald-700 bg-emerald-950/20"
-                                    : "border-gray-700 hover:border-gray-600 bg-gray-800/20"
+                                ? "border-emerald-700 bg-emerald-950/20"
+                                : "border-gray-700 hover:border-gray-600 bg-gray-800/20"
                                 }`}
                         >
                             <input
@@ -309,12 +307,12 @@ export default function InputForm() {
                 )}
             </div>
 
-            {/* ── Advanced settings ──────────────────────────────────────────── */}
+            {/* Advanced settings */}
             <AdvancedSettings
                 numanalogues={numanalogues}
                 onNumAnaloguesChange={setNumanalogues}
-                directScoreOnly={directScoreOnly}           // ← NEW
-                onDirectScoreOnlyChange={setDirectScoreOnly} // ← NEW
+                directScoreOnly={directScoreOnly}
+                onDirectScoreOnlyChange={setDirectScoreOnly}
                 pipelineSteps={pipelineSteps}
                 onPipelineStepsChange={setPipelineSteps}
                 dockingSpeed={dockingSpeed}
@@ -325,9 +323,13 @@ export default function InputForm() {
                 onBindingSiteCoordsChange={setBindingSiteCoords}
                 bindingSiteResidues={bindingSiteResidues}
                 onBindingSiteResiduesChange={setBindingSiteResidues}
+                mwMin={mwMin}
+                mwMax={mwMax}
+                onMwMinChange={setMwMin}
+                onMwMaxChange={setMwMax}
             />
 
-            {/* ── Error message ──────────────────────────────────────────────── */}
+            {/* Error message */}
             {error && (
                 <div className="flex items-start gap-3 p-4 rounded-xl bg-red-950/30 border border-red-800/50 animate-slide-up">
                     <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
@@ -335,7 +337,7 @@ export default function InputForm() {
                 </div>
             )}
 
-            {/* ── Submit button ──────────────────────────────────────────────── */}
+            {/* Submit button */}
             <button
                 type="submit"
                 disabled={submitting}

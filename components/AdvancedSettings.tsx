@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronUp, Info, Zap } from "lucide-react";  // ← added Zap
+import { ChevronDown, ChevronUp, Info, Zap } from "lucide-react";
 import type {
     PipelineSteps,
     DockingSpeed,
@@ -9,7 +9,6 @@ import type {
     BindingSiteCoords,
     BindingSiteResidues,
 } from "@/lib/api";
-
 
 interface AdvancedSettingsProps {
     numanalogues: 10 | 25 | 50;
@@ -24,10 +23,13 @@ interface AdvancedSettingsProps {
     onBindingSiteCoordsChange: (v: BindingSiteCoords) => void;
     bindingSiteResidues: BindingSiteResidues;
     onBindingSiteResiduesChange: (v: BindingSiteResidues) => void;
-    directScoreOnly: boolean;            // ← NEW
-    onDirectScoreOnlyChange: (v: boolean) => void;  // ← NEW
+    directScoreOnly: boolean;
+    onDirectScoreOnlyChange: (v: boolean) => void;
+    mwMin: number;
+    mwMax: number;
+    onMwMinChange: (v: number) => void;
+    onMwMaxChange: (v: number) => void;
 }
-
 
 export default function AdvancedSettings({
     numanalogues,
@@ -42,8 +44,12 @@ export default function AdvancedSettings({
     onBindingSiteCoordsChange,
     bindingSiteResidues,
     onBindingSiteResiduesChange,
-    directScoreOnly,           // ← NEW
-    onDirectScoreOnlyChange,   // ← NEW
+    directScoreOnly,
+    onDirectScoreOnlyChange,
+    mwMin,
+    mwMax,
+    onMwMinChange,
+    onMwMaxChange,
 }: AdvancedSettingsProps) {
     const [open, setOpen] = useState(false);
 
@@ -76,7 +82,6 @@ export default function AdvancedSettings({
                 <span className="flex items-center gap-2">
                     <span className="text-gray-500">⚙</span>
                     Advanced Settings
-                    {/* ← NEW: show badge when direct mode is active */}
                     {directScoreOnly && (
                         <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-violet-900/50 border border-violet-700 text-violet-300">
                             <Zap className="w-2.5 h-2.5" />
@@ -94,10 +99,10 @@ export default function AdvancedSettings({
             {open && (
                 <div className="mt-5 space-y-6 animate-slide-up">
 
-                    {/* ── NEW: Direct Score Mode toggle ───────────────────────── */}
+                    {/* Direct Score Mode toggle */}
                     <div className={`p-3 rounded-xl border transition-all ${directScoreOnly
-                            ? "bg-violet-950/30 border-violet-700"
-                            : "bg-gray-800/30 border-gray-800"
+                        ? "bg-violet-950/30 border-violet-700"
+                        : "bg-gray-800/30 border-gray-800"
                         }`}>
                         <div className="flex items-center justify-between gap-3">
                             <div className="flex items-start gap-2">
@@ -112,18 +117,14 @@ export default function AdvancedSettings({
                             <button
                                 type="button"
                                 onClick={() => onDirectScoreOnlyChange(!directScoreOnly)}
-                                className={`w-9 h-5 rounded-full relative transition-colors flex-shrink-0 ${directScoreOnly ? "bg-violet-600" : "bg-gray-700"
-                                    }`}
+                                className={`w-9 h-5 rounded-full relative transition-colors flex-shrink-0 ${directScoreOnly ? "bg-violet-600" : "bg-gray-700"}`}
                             >
-                                <span
-                                    className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${directScoreOnly ? "translate-x-4" : "translate-x-0.5"
-                                        }`}
-                                />
+                                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${directScoreOnly ? "translate-x-[1.125rem]" : "translate-x-0"}`} />
                             </button>
                         </div>
                     </div>
 
-                    {/* ── Number of analogues ─────────────────────────────────── */}
+                    {/* Number of analogues */}
                     <div className={directScoreOnly ? "opacity-40 pointer-events-none" : ""}>
                         <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
                             Analogues to Generate
@@ -138,8 +139,8 @@ export default function AdvancedSettings({
                                     type="button"
                                     onClick={() => onNumAnaloguesChange(n)}
                                     className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-all ${numanalogues === n
-                                            ? "bg-emerald-900/50 border-emerald-600 text-emerald-300"
-                                            : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
+                                        ? "bg-emerald-900/50 border-emerald-600 text-emerald-300"
+                                        : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
                                         }`}
                                 >
                                     {n}
@@ -151,7 +152,7 @@ export default function AdvancedSettings({
                         </p>
                     </div>
 
-                    {/* ── Pipeline steps toggles ───────────────────────────────── */}
+                    {/* Pipeline steps toggles */}
                     <div>
                         <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
                             Pipeline Steps
@@ -161,8 +162,8 @@ export default function AdvancedSettings({
                                 <div
                                     key={key}
                                     className={`flex items-start gap-3 p-3 rounded-lg border transition-all ${pipelineSteps[key]
-                                            ? "bg-emerald-950/30 border-emerald-900"
-                                            : "bg-gray-800/30 border-gray-800"
+                                        ? "bg-emerald-950/30 border-emerald-900"
+                                        : "bg-gray-800/30 border-gray-800"
                                         }`}
                                 >
                                     <button
@@ -172,10 +173,7 @@ export default function AdvancedSettings({
                                         className={`mt-0.5 w-9 h-5 rounded-full relative transition-colors flex-shrink-0 ${pipelineSteps[key] ? "bg-emerald-600" : "bg-gray-700"
                                             } ${locked ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
                                     >
-                                        <span
-                                            className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${pipelineSteps[key] ? "translate-x-4" : "translate-x-0.5"
-                                                }`}
-                                        />
+                                        <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${pipelineSteps[key] ? "translate-x-[1.125rem]" : "translate-x-0"}`} />
                                     </button>
                                     <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-2">
@@ -185,13 +183,53 @@ export default function AdvancedSettings({
                                             )}
                                         </div>
                                         <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
+
+                                        {/* MW range inputs — only under drug_likeness */}
+                                        {key === "drug_likeness" && (
+                                            <div className="flex items-center gap-2 mt-3">
+                                                <div className="flex flex-col gap-0.5">
+                                                    <label className="text-[10px] text-gray-500">Min MW (Da)</label>
+                                                    <input
+                                                        type="number"
+                                                        min={0}
+                                                        max={mwMax - 1}
+                                                        value={mwMin}
+                                                        onChange={(e) => onMwMinChange(Number(e.target.value))}
+                                                        className="w-20 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-emerald-600"
+                                                    />
+                                                </div>
+                                                <span className="text-gray-600 mt-4">–</span>
+                                                <div className="flex flex-col gap-0.5">
+                                                    <label className="text-[10px] text-gray-500">Max MW (Da)</label>
+                                                    <input
+                                                        type="number"
+                                                        min={mwMin + 1}
+                                                        max={1000}
+                                                        value={mwMax}
+                                                        onChange={(e) => onMwMaxChange(Number(e.target.value))}
+                                                        className="w-20 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-emerald-600"
+                                                    />
+                                                </div>
+                                                <div className="mt-4">
+                                                    {(mwMin !== 200 || mwMax !== 500) && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => { onMwMinChange(200); onMwMaxChange(500); }}
+                                                            className="text-[10px] text-gray-500 hover:text-emerald-400 transition-colors"
+                                                        >
+                                                            reset
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             ))}
                         </div>
                     </div>
 
-                    {/* ── Docking speed ────────────────────────────────────────── */}
+                    {/* Docking speed */}
                     {pipelineSteps.docking && (
                         <div>
                             <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
@@ -204,8 +242,8 @@ export default function AdvancedSettings({
                                         type="button"
                                         onClick={() => onDockingSpeedChange(value)}
                                         className={`w-full flex items-center justify-between p-3 rounded-lg border text-left transition-all ${dockingSpeed === value
-                                                ? "bg-emerald-950/30 border-emerald-700 text-emerald-300"
-                                                : "bg-gray-800/30 border-gray-800 text-gray-400 hover:border-gray-700"
+                                            ? "bg-emerald-950/30 border-emerald-700 text-emerald-300"
+                                            : "bg-gray-800/30 border-gray-800 text-gray-400 hover:border-gray-700"
                                             }`}
                                     >
                                         <span className="text-sm font-medium">{label}</span>
@@ -216,7 +254,7 @@ export default function AdvancedSettings({
                         </div>
                     )}
 
-                    {/* ── Binding site ─────────────────────────────────────────── */}
+                    {/* Binding site */}
                     {pipelineSteps.docking && (
                         <div>
                             <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
@@ -229,8 +267,8 @@ export default function AdvancedSettings({
                                         type="button"
                                         onClick={() => onBindingSiteModeChange(mode)}
                                         className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all capitalize ${bindingSiteMode === mode
-                                                ? "bg-emerald-900/50 border-emerald-600 text-emerald-300"
-                                                : "bg-gray-800 border-gray-700 text-gray-500 hover:border-gray-600"
+                                            ? "bg-emerald-900/50 border-emerald-600 text-emerald-300"
+                                            : "bg-gray-800 border-gray-700 text-gray-500 hover:border-gray-600"
                                             }`}
                                     >
                                         {mode}
