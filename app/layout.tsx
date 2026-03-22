@@ -5,7 +5,7 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "CADD Pipeline",
+  title: "CADD Pipeline-Novoo",
   description: "Compound screening pipeline: analogue generation, ADMET filtering, molecular docking, and retrosynthesis.",
 };
 
