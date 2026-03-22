@@ -2,38 +2,46 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import {
-    Upload, FlaskConical, Loader2, AlertCircle,
-    CheckCircle2, ExternalLink, X
-} from "lucide-react";
+import { Upload, FlaskConical, Loader2, AlertCircle, CheckCircle2, ExternalLink, X } from "lucide-react";
 import AdvancedSettings from "./AdvancedSettings";
 import {
-    submitJob, submitJobWithFile, fetchPdbMetadata, pingBackend,
-    type PipelineSteps, type DockingSpeed, type BindingSiteMode,
-    type BindingSiteCoords, type BindingSiteResidues,
+    submitJob,
+    submitJobWithFile,
+    fetchPdbMetadata,
+    pingBackend,
+    type PipelineSteps,
+    type DockingSpeed,
+    type BindingSiteMode,
+    type BindingSiteCoords,
+    type BindingSiteResidues,
 } from "@/lib/api";
 
-const MYRICETIN_SMILES = "OC1=C(O)C(=CC(=C1)C1=C(O)C(=O)C2=CC(O)=CC(O)=C12)O";
+const MYRICETIN_SMILES = "OC1=CC(=CC(O)=C1O)C1=C(O)C(=O)C2=C(O)C(O)=CC(O)=C2O1";
 
 export default function InputForm() {
     const router = useRouter();
 
-    // Form state
+    // ── Form state ────────────────────────────────────────────────────────────
     const [smiles, setSmiles] = useState(MYRICETIN_SMILES);
     const [pdbMode, setPdbMode] = useState<"id" | "file">("id");
     const [pdbId, setPdbId] = useState("");
     const [pdbFile, setPdbFile] = useState<File | null>(null);
     const [pdbMeta, setPdbMeta] = useState<{
-        title: string; resolution_angstrom: number | null; protein_chains: number
+        title: string;
+        resolution_angstrom: number | null;
+        protein_chains: number;
     } | null>(null);
     const [pdbMetaLoading, setPdbMetaLoading] = useState(false);
 
-    // Advanced settings state
-    const [numanalogues, setNumanalogues] = useState<10 | 25 | 50>(25);
+    // ── Advanced settings state ───────────────────────────────────────────────
+    const [numAnalogues, setNumAnalogues] = useState<10 | 25 | 50>(25);
     const [directScoreOnly, setDirectScoreOnly] = useState(false);
     const [pipelineSteps, setPipelineSteps] = useState<PipelineSteps>({
-        drug_likeness: true, admet: true, binding_prefilter: true,
-        docking: true, retrosynthesis: true,
+        drug_likeness: true,
+        admet: true,
+        binding_prefilter: true,
+        docking: true,
+        retrosynthesis: true,
     });
     const [dockingSpeed, setDockingSpeed] = useState<DockingSpeed>("balanced");
     const [bindingSiteMode, setBindingSiteMode] = useState<BindingSiteMode>("auto");
@@ -45,8 +53,10 @@ export default function InputForm() {
     });
     const [mwMin, setMwMin] = useState(200);
     const [mwMax, setMwMax] = useState(500);
+    // null = "Ignore completely"
+    const [maxLipinskiViolations, setMaxLipinskiViolations] = useState<number | null>(1);
 
-    // Submission state
+    // ── Submission state ──────────────────────────────────────────────────────
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [backendAwake, setBackendAwake] = useState<boolean | null>(null);
@@ -54,15 +64,12 @@ export default function InputForm() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const pdbDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    useEffect(() => {
-        pingBackend().then(setBackendAwake);
-    }, []);
+    useEffect(() => { pingBackend().then(setBackendAwake); }, []);
 
     useEffect(() => {
         if (pdbDebounceRef.current) clearTimeout(pdbDebounceRef.current);
         setPdbMeta(null);
         if (pdbId.length !== 4) return;
-
         pdbDebounceRef.current = setTimeout(async () => {
             setPdbMetaLoading(true);
             const meta = await fetchPdbMetadata(pdbId);
@@ -77,10 +84,12 @@ export default function InputForm() {
 
         if (!smiles.trim()) { setError("SMILES string is required."); return; }
         if (pdbMode === "id" && pdbId.trim().length !== 4) {
-            setError("PDB ID must be exactly 4 characters (e.g. 1HSG)."); return;
+            setError("PDB ID must be exactly 4 characters (e.g. 1HSG).");
+            return;
         }
         if (pdbMode === "file" && !pdbFile) {
-            setError("Please upload a .pdb file."); return;
+            setError("Please upload a .pdb file.");
+            return;
         }
 
         setSubmitting(true);
@@ -88,19 +97,20 @@ export default function InputForm() {
             let response;
             if (pdbMode === "file" && pdbFile) {
                 response = await submitJobWithFile(smiles, pdbFile, {
-                    num_analogues: directScoreOnly ? 0 : numanalogues,
+                    num_analogues: directScoreOnly ? 0 : numAnalogues,
                     docking_speed: dockingSpeed,
                     binding_site_mode: bindingSiteMode,
                     pipeline_steps: pipelineSteps,
                     direct_score_only: directScoreOnly,
                     mw_min: mwMin,
                     mw_max: mwMax,
+                    max_lipinski_violations: maxLipinskiViolations,
                 });
             } else {
                 response = await submitJob({
                     smiles,
                     pdb_id: pdbId.toUpperCase(),
-                    num_analogues: directScoreOnly ? 0 : numanalogues,
+                    num_analogues: directScoreOnly ? 0 : numAnalogues,
                     direct_score_only: directScoreOnly,
                     pipeline_steps: pipelineSteps,
                     binding_site_mode: bindingSiteMode,
@@ -109,6 +119,7 @@ export default function InputForm() {
                     docking_speed: dockingSpeed,
                     mw_min: mwMin,
                     mw_max: mwMax,
+                    max_lipinski_violations: maxLipinskiViolations,
                 });
             }
             router.push(`/status/${response.job_id}`);
@@ -121,31 +132,29 @@ export default function InputForm() {
     return (
         <form onSubmit={handleSubmit} className="space-y-6">
 
-            {/* Backend status banner */}
+            {/* ── Backend status banner ───────────────────────────────────── */}
             {backendAwake === false && (
                 <div className="flex items-start gap-3 p-4 rounded-xl bg-yellow-950/30 border border-yellow-800/50">
                     <AlertCircle className="w-4 h-4 text-yellow-400 mt-0.5 flex-shrink-0" />
                     <div className="text-sm">
                         <p className="text-yellow-300 font-medium">Backend is waking up</p>
                         <p className="text-yellow-600 mt-0.5">
-                            The Hugging Face Space may be sleeping. First request takes ~60s.
-                            You can still submit — it will queue automatically.
+                            The Hugging Face Space may be sleeping. First request takes ~60s. You can still submit — it will queue automatically.
                         </p>
                     </div>
                 </div>
             )}
 
-            {/* SMILES input */}
+            {/* ── SMILES input ────────────────────────────────────────────── */}
             <div className="card">
                 <label className="block text-sm font-medium text-gray-300 mb-1">
-                    Base Compound (SMILES)
+                    Base Compound SMILES
                     <span className="ml-2 text-xs text-gray-500 font-normal">required</span>
                 </label>
                 <p className="text-xs text-gray-500 mb-3">
                     {directScoreOnly
-                        ? "This exact compound will be scored through the full pipeline — no analogues generated."
-                        : "Enter the SMILES string of your base compound. Analogues will be generated from this scaffold."
-                    }
+                        ? "This exact compound will be scored through the full pipeline (no analogues generated)."
+                        : "Enter the SMILES string of your base compound. Analogues will be generated from this scaffold."}
                 </p>
                 <div className="relative">
                     <textarea
@@ -174,18 +183,17 @@ export default function InputForm() {
                         Use myricetin (default)
                     </button>
                     <a
-                        href="https://pubchem.ncbi.nlm.nih.gov/"
+                        href="https://pubchem.ncbi.nlm.nih.gov"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs text-gray-500 hover:text-gray-400 flex items-center gap-1 transition-colors"
                     >
-                        Find SMILES on PubChem
-                        <ExternalLink className="w-3 h-3" />
+                        Find SMILES on PubChem <ExternalLink className="w-3 h-3" />
                     </a>
                 </div>
             </div>
 
-            {/* Target Protein */}
+            {/* ── Target Protein ──────────────────────────────────────────── */}
             <div className="card">
                 <label className="block text-sm font-medium text-gray-300 mb-1">
                     Target Protein
@@ -195,6 +203,7 @@ export default function InputForm() {
                     Provide the protein structure to dock against.
                 </p>
 
+                {/* Mode tabs */}
                 <div className="flex gap-1 p-1 bg-gray-800 rounded-lg w-fit mb-4">
                     {(["id", "file"] as const).map((mode) => (
                         <button
@@ -202,8 +211,8 @@ export default function InputForm() {
                             type="button"
                             onClick={() => setPdbMode(mode)}
                             className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${pdbMode === mode
-                                ? "bg-gray-700 text-gray-100"
-                                : "text-gray-500 hover:text-gray-300"
+                                    ? "bg-gray-700 text-gray-100"
+                                    : "text-gray-500 hover:text-gray-300"
                                 }`}
                         >
                             {mode === "id" ? "PDB ID" : "Upload File"}
@@ -236,11 +245,11 @@ export default function InputForm() {
                                 <div className="flex gap-4 mt-1">
                                     {pdbMeta.resolution_angstrom && (
                                         <span className="text-xs text-gray-500">
-                                            Resolution: <span className="text-gray-400">{pdbMeta.resolution_angstrom}Å</span>
+                                            Resolution <span className="text-gray-400">{pdbMeta.resolution_angstrom}Å</span>
                                         </span>
                                     )}
                                     <span className="text-xs text-gray-500">
-                                        Chains: <span className="text-gray-400">{pdbMeta.protein_chains}</span>
+                                        Chains <span className="text-gray-400">{pdbMeta.protein_chains}</span>
                                     </span>
                                     <a
                                         href={`https://www.rcsb.org/structure/${pdbId}`}
@@ -253,7 +262,6 @@ export default function InputForm() {
                                 </div>
                             </div>
                         )}
-
                         {pdbId.length === 4 && !pdbMeta && !pdbMetaLoading && (
                             <p className="mt-1 text-xs text-red-400">
                                 PDB ID not found. Check the ID at rcsb.org.
@@ -267,8 +275,8 @@ export default function InputForm() {
                         <div
                             onClick={() => fileInputRef.current?.click()}
                             className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${pdbFile
-                                ? "border-emerald-700 bg-emerald-950/20"
-                                : "border-gray-700 hover:border-gray-600 bg-gray-800/20"
+                                    ? "border-emerald-700 bg-emerald-950/20"
+                                    : "border-gray-700 hover:border-gray-600 bg-gray-800/20"
                                 }`}
                         >
                             <input
@@ -276,7 +284,7 @@ export default function InputForm() {
                                 type="file"
                                 accept=".pdb"
                                 className="hidden"
-                                onChange={(e) => setPdbFile(e.target.files?.[0] || null)}
+                                onChange={(e) => setPdbFile(e.target.files?.[0] ?? null)}
                             />
                             {pdbFile ? (
                                 <div className="flex items-center justify-center gap-2">
@@ -294,23 +302,23 @@ export default function InputForm() {
                                     </button>
                                 </div>
                             ) : (
-                                <div>
+                                <>
                                     <Upload className="w-8 h-8 text-gray-600 mx-auto mb-2" />
                                     <p className="text-sm text-gray-400">Click to upload a .pdb file</p>
                                     <p className="text-xs text-gray-600 mt-1">
                                         Download from rcsb.org → Format: PDB → Download
                                     </p>
-                                </div>
+                                </>
                             )}
                         </div>
                     </div>
                 )}
             </div>
 
-            {/* Advanced settings */}
+            {/* ── Advanced settings ───────────────────────────────────────── */}
             <AdvancedSettings
-                numanalogues={numanalogues}
-                onNumAnaloguesChange={setNumanalogues}
+                numAnalogues={numAnalogues}
+                onNumAnaloguesChange={setNumAnalogues}
                 directScoreOnly={directScoreOnly}
                 onDirectScoreOnlyChange={setDirectScoreOnly}
                 pipelineSteps={pipelineSteps}
@@ -327,9 +335,11 @@ export default function InputForm() {
                 mwMax={mwMax}
                 onMwMinChange={setMwMin}
                 onMwMaxChange={setMwMax}
+                maxLipinskiViolations={maxLipinskiViolations}
+                onMaxLipinskiViolationsChange={setMaxLipinskiViolations}
             />
 
-            {/* Error message */}
+            {/* ── Error message ───────────────────────────────────────────── */}
             {error && (
                 <div className="flex items-start gap-3 p-4 rounded-xl bg-red-950/30 border border-red-800/50 animate-slide-up">
                     <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
@@ -337,36 +347,26 @@ export default function InputForm() {
                 </div>
             )}
 
-            {/* Submit button */}
+            {/* ── Submit button ───────────────────────────────────────────── */}
             <button
                 type="submit"
                 disabled={submitting}
                 className="btn-primary w-full py-3 text-base"
             >
                 {submitting ? (
-                    <>
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                        Submitting pipeline job...
-                    </>
+                    <><Loader2 className="w-5 h-5 animate-spin" /> Submitting pipeline job...</>
                 ) : directScoreOnly ? (
-                    <>
-                        <FlaskConical className="w-5 h-5" />
-                        Score This Compound Directly
-                    </>
+                    <><FlaskConical className="w-5 h-5" /> Score This Compound Directly</>
                 ) : (
-                    <>
-                        <FlaskConical className="w-5 h-5" />
-                        Run CADD Pipeline
-                    </>
+                    <><FlaskConical className="w-5 h-5" /> Run CADD Pipeline</>
                 )}
             </button>
-
             <p className="text-xs text-gray-600 text-center">
                 {directScoreOnly
-                    ? "Direct scoring skips analogue generation — results in ~5–15 minutes."
-                    : "Pipeline takes 30–60 minutes depending on settings. You'll get a tracking URL immediately."
-                }
+                    ? "Direct scoring skips analogue generation — results in 5–15 minutes."
+                    : "Pipeline takes 30–60 minutes depending on settings. You'll get a tracking URL immediately."}
             </p>
+
         </form>
     );
 }

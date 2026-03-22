@@ -45,6 +45,8 @@ export interface JobRequest {
     docking_speed: DockingSpeed;
     mw_min?: number;
     mw_max?: number;
+    // null = "Ignore completely" — all compounds pass regardless of violations
+    max_lipinski_violations?: number | null;
 }
 
 export interface JobSubmitResponse {
@@ -201,6 +203,8 @@ export async function submitJobWithFile(
         direct_score_only?: boolean;
         mw_min?: number;
         mw_max?: number;
+        // null = "Ignore completely"; sent as -1 over FormData, backend converts back to None
+        max_lipinski_violations?: number | null;
     }
 ): Promise<JobSubmitResponse> {
     const formData = new FormData();
@@ -213,6 +217,11 @@ export async function submitJobWithFile(
     formData.append("direct_score_only", String(options.direct_score_only ?? false));
     formData.append("mw_min", String(options.mw_min ?? 200));
     formData.append("mw_max", String(options.mw_max ?? 500));
+    // null → -1 sentinel (FormData can't carry null; backend converts -1 → None)
+    formData.append(
+        "max_lipinski_violations",
+        String(options.max_lipinski_violations === null ? -1 : (options.max_lipinski_violations ?? 1))
+    );
 
     const response = await fetch(`${BACKEND_URL}/api/v1/jobs/upload`, {
         method: "POST",
