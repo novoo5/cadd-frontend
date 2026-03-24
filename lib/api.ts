@@ -71,8 +71,10 @@ export interface JobSubmitResponse {
 export interface PipelineStepInfo {
     name: string;
     status: StepStatus;
-    message?: string;
-    duration_seconds?: number;
+    message?: string | null;
+    duration_seconds?: number | null;
+    progress_current?: number | null;   // ← NEW: e.g. 47
+    progress_total?: number | null;   // ← NEW: e.g. 100
 }
 
 export interface JobStatusResponse {
@@ -220,7 +222,6 @@ export async function submitJob(request: JobRequest): Promise<JobSubmitResponse>
     return response.json();
 }
 
-
 export async function submitJobWithFile(
     smiles: string,
     pdbFile: File | null,
@@ -269,7 +270,6 @@ export async function submitJobWithFile(
     return response.json();
 }
 
-
 export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
     const response = await fetch(`${BACKEND_URL}/api/v1/jobs/${jobId}/status`, {
         cache: "no-store",
@@ -282,7 +282,6 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
     return response.json();
 }
 
-
 export async function getJobResults(jobId: string): Promise<JobResultsResponse | null> {
     const response = await fetch(`${BACKEND_URL}/api/v1/jobs/${jobId}/results`, {
         cache: "no-store",
@@ -294,7 +293,6 @@ export async function getJobResults(jobId: string): Promise<JobResultsResponse |
     }
     return response.json();
 }
-
 
 export async function getScoreBreakdown(
     jobId: string,
@@ -309,7 +307,6 @@ export async function getScoreBreakdown(
     return response.json();
 }
 
-
 export async function pingBackend(): Promise<boolean> {
     try {
         const response = await fetch(`${BACKEND_URL}/api/v1/health/ping`, {
@@ -321,7 +318,6 @@ export async function pingBackend(): Promise<boolean> {
         return false;
     }
 }
-
 
 export async function fetchPdbMetadata(
     pdbId: string,
