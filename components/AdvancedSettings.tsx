@@ -15,7 +15,7 @@ import type {
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface AdvancedSettingsProps {
-    // ← was: 10 | 25 | 50  — now any number 1–1000
+    // ← was: 10 | 25 | 50  — now any number 1–10000
     numAnalogues: number;
     onNumAnaloguesChange: (v: number) => void;
 
@@ -93,15 +93,15 @@ const STEPS: {
     ];
 
 const DOCKING_SPEEDS: { value: DockingSpeed; label: string; desc: string }[] = [
-    { value: "fast", label: "Fast", desc: "exhaustiveness=8, ~5 min/compound" },
+    { value: "fast",     label: "Fast",     desc: "exhaustiveness=8, ~5 min/compound" },
     { value: "balanced", label: "Balanced", desc: "exhaustiveness=16, ~10 min/compound" },
     { value: "thorough", label: "Thorough", desc: "exhaustiveness=32, ~20 min/compound" },
 ];
 
 const VIOLATION_OPTIONS: { value: string; label: string }[] = [
-    { value: "1", label: "Strict — ≤1 violation (classic RO5)" },
-    { value: "2", label: "Relaxed — ≤2 violations" },
-    { value: "3", label: "Lenient — ≤3 violations" },
+    { value: "1",    label: "Strict — ≤1 violation (classic RO5)" },
+    { value: "2",    label: "Relaxed — ≤2 violations" },
+    { value: "3",    label: "Lenient — ≤3 violations" },
     { value: "null", label: "Ignore completely (no filter)" },
 ];
 
@@ -132,7 +132,7 @@ const SOLUBILITY_OPTIONS: {
     ];
 
 // Quick-select counts shown as buttons
-const ANALOGUE_PRESETS = [25, 50, 100, 250, 500] as const;
+const ANALOGUE_PRESETS = [25, 50, 100, 500, 1000] as const;
 
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -177,8 +177,6 @@ export default function AdvancedSettings({
         onMaxLipinskiViolationsChange(raw === "null" ? null : parseInt(raw, 10));
     };
 
-    // Analogues section is disabled in both direct-score and toxicity-only modes
-    // (toxicity-only can still use analogues but controlled separately via num_analogues)
     const analoguesDisabled = directScoreOnly;
 
     return (
@@ -276,7 +274,7 @@ export default function AdvancedSettings({
                         </div>
                     </div>
 
-                    {/* ── 3. Number of analogues (1–1000) ─────────────────── */}
+                    {/* ── 3. Number of analogues (1–10000) ────────────────── */}
                     <div className={analoguesDisabled ? "opacity-40 pointer-events-none" : ""}>
                         <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
                             Analogues to Generate
@@ -307,29 +305,35 @@ export default function AdvancedSettings({
                         {/* Custom numeric input */}
                         <div className="flex items-center gap-2">
                             <span className="text-xs text-gray-500 flex-shrink-0">
-                                Custom (1–1000):
+                                Custom (1–10000):
                             </span>
                             <input
                                 type="number"
                                 min={1}
-                                max={1000}
+                                max={10000}
                                 value={numAnalogues}
                                 onChange={(e) => {
-                                    const v = Math.max(1, Math.min(1000, parseInt(e.target.value) || 25));
+                                    const v = Math.max(1, Math.min(10000, parseInt(e.target.value) || 25));
                                     onNumAnaloguesChange(v);
                                 }}
                                 className="w-24 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-emerald-600"
                             />
-                            {numAnalogues >= 500 && (
+                            {numAnalogues >= 5000 && (
+                                <span className="text-[10px] text-red-400">
+                                    ⚠ Very large run — chemical space may saturate before {numAnalogues}
+                                </span>
+                            )}
+                            {numAnalogues >= 1000 && numAnalogues < 5000 && (
                                 <span className="text-[10px] text-yellow-500">
-                                    ⚠ Large runs may take 30–90 min
+                                    ⚠ Large run — may take 30–90 min
                                 </span>
                             )}
                         </div>
                         <p className="mt-1.5 text-xs text-gray-600">
                             Uses 5-strategy exhaustive mutation (BRICS, FG swaps, substituent
                             additions, atom mutations, chain edits) with 2nd-order mutations from
-                            accepted analogues. Reliably fills the requested count up to 1000.
+                            accepted analogues. Reliably fills the requested count up to ~3000;
+                            beyond that chemical space may saturate.
                         </p>
                     </div>
 
@@ -383,7 +387,6 @@ export default function AdvancedSettings({
                         </label>
                         <div className="space-y-2">
                             {STEPS.map(({ key, label, desc, locked }) => {
-                                // In toxicity-only mode, non-ADMET steps are force-skipped
                                 const forceSkipped =
                                     toxicityReportOnly &&
                                     key !== "admet" &&
@@ -441,11 +444,11 @@ export default function AdvancedSettings({
                                                     </p>
                                                     <div className="space-y-0.5">
                                                         {[
-                                                            { prop: "hERG Inhibition", thresh: ">0.50", risk: "cardiac arrhythmia" },
-                                                            { prop: "Hepatotoxicity", thresh: ">0.50", risk: "liver toxicity (DILI)" },
-                                                            { prop: "Caco-2 Permeability", thresh: "<−5.15 log", risk: "poor oral absorption" },
-                                                            { prop: "Oral Bioavailability", thresh: "<0.30", risk: "poor systemic exposure" },
-                                                            { prop: "BBB Penetration", thresh: "<0.30", risk: "limited CNS exposure (info only)" },
+                                                            { prop: "hERG Inhibition",      thresh: ">0.50",      risk: "cardiac arrhythmia" },
+                                                            { prop: "Hepatotoxicity",        thresh: ">0.50",      risk: "liver toxicity (DILI)" },
+                                                            { prop: "Caco-2 Permeability",   thresh: "<−5.15 log", risk: "poor oral absorption" },
+                                                            { prop: "Oral Bioavailability",  thresh: "<0.30",      risk: "poor systemic exposure" },
+                                                            { prop: "BBB Penetration",       thresh: "<0.30",      risk: "limited CNS exposure (info only)" },
                                                         ].map(({ prop, thresh, risk }) => (
                                                             <div key={prop} className="flex items-center justify-between gap-2">
                                                                 <span className="text-[10px] text-gray-400 truncate">{prop}</span>
