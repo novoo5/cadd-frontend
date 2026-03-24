@@ -43,6 +43,7 @@ export interface JobRequest {
     smiles: string;
     pdb_id?: string;
     pdb_content?: string;
+    // ← was le=1000, now supports 0–10000
     num_analogues: number;
     direct_score_only?: boolean;
     solubility_filter?: SolubilityFilterMode;
@@ -54,7 +55,6 @@ export interface JobRequest {
     docking_speed: DockingSpeed;
     mw_min?: number;
     mw_max?: number;
-    // null = "Ignore completely" — all compounds pass regardless of violations
     max_lipinski_violations?: number | null;
 }
 
@@ -199,8 +199,8 @@ export interface ScoreBreakdown {
     admet_safety?: ScoreBreakdownItem;
     solubility?: ScoreBreakdownItem;
     synthesis_ease?: ScoreBreakdownItem;
-    binding_prefilter?: ScoreBreakdownItem; // ← added
-    mw_fragment_penalty?: boolean;            // ← added
+    binding_prefilter?: ScoreBreakdownItem;
+    mw_fragment_penalty?: boolean;
     final_score?: number;
 }
 
