@@ -3,19 +3,23 @@
 import { useState } from "react";
 import {
     ChevronDown, ChevronUp, Copy, CheckCheck,
-    FlaskConical, Activity, Dna, GitBranch, Info
+    FlaskConical, Activity, Dna, GitBranch, Info,
+    AlertTriangle, AlertCircle, Lightbulb,
 } from "lucide-react";
-import type { CompoundResult, ScoreBreakdown } from "@/lib/api";
+import type { CompoundResult, ScoreBreakdown, ADMETFlagDetail } from "@/lib/api";
 import {
     getScoreColor, getAffinityColor,
-    formatProbability, getScoreBreakdown
+    formatProbability, getScoreBreakdown,
+    getFlagSeverityColor,
 } from "@/lib/api";
+
 
 interface MoleculeCardProps {
     compound: CompoundResult;
     jobId: string;
     index: number;
 }
+
 
 // ── Simple hover tooltip ──────────────────────────────────────────────────────
 const Tip = ({ text }: { text: string }) => (
@@ -27,14 +31,16 @@ const Tip = ({ text }: { text: string }) => (
     </span>
 );
 
+
 // ── Score breakdown label tooltips ────────────────────────────────────────────
 const BREAKDOWN_TIPS: Record<string, string> = {
     docking_affinity: "Max 50pts. Normalized from −4 (no binding) to −12 kcal/mol (exceptional). More negative affinity = more points.",
     admet_safety: "Max 20pts. 0 flags = full score. Each toxicity flag reduces the score. hERG cardiac risk applies an additional penalty.",
-    solubility: "Max 10pts. High=10, Medium=7, Low=3, Very Low=0. Poor solubility = drug can't dissolve in blood.",
+    solubility: "Max 10pts. High=10, Medium=7, Low=3, Very Low=0 + global penalty applied. Poor solubility = drug can't dissolve in blood.",
     binding_prefilter: "Max 10pts. GNN-predicted binding affinity × model confidence. Lower confidence = fewer points even if affinity is high.",
     synthesis_ease: "Max 10pts. Based on SA Score complexity. Simpler molecules score higher — complexity < 15 gets near-full points.",
 };
+
 
 // ── Affinity quality label ────────────────────────────────────────────────────
 const getAffinityLabel = (kcal: number): { label: string; color: string } => {
@@ -50,6 +56,51 @@ const getComplexityLabel = (score: number): { label: string; color: string } => 
     if (score < 40) return { label: "Difficult", color: "text-orange-400" };
     return { label: "Infeasible", color: "text-red-400" };
 };
+
+
+// ── Structured ADMET flag card ────────────────────────────────────────────────
+// ← NEW: replaces the old `<p key={flag}>⚠ {flag}</p>` that crashed
+const ADMETFlagCard = ({ flag }: { flag: ADMETFlagDetail }) => {
+    const [open, setOpen] = useState(false);
+    const severityClasses = getFlagSeverityColor(flag.severity);
+
+    return (
+        <div className={`rounded-lg border px-2.5 py-2 text-xs ${severityClasses}`}>
+            <div
+                className="flex items-center justify-between gap-2 cursor-pointer"
+                onClick={() => setOpen(!open)}
+            >
+                <div className="flex items-center gap-1.5 min-w-0">
+                    {flag.severity === "high"
+                        ? <AlertCircle className="w-3 h-3 flex-shrink-0" />
+                        : <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                    }
+                    <span className="font-medium truncate">{flag.property_name}</span>
+                    <span className="font-mono opacity-70">
+                        {flag.value} ({flag.direction} {flag.threshold})
+                    </span>
+                </div>
+                <span className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase border ${severityClasses}`}>
+                    {flag.severity}
+                </span>
+            </div>
+
+            {open && (
+                <div className="mt-2 pt-2 border-t border-current/20 space-y-1.5 animate-slide-up">
+                    <div className="flex items-start gap-1.5">
+                        <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0 opacity-60" />
+                        <p className="opacity-80">{flag.implication}</p>
+                    </div>
+                    <div className="flex items-start gap-1.5">
+                        <Lightbulb className="w-3 h-3 mt-0.5 flex-shrink-0 opacity-60" />
+                        <p className="opacity-70">{flag.recommendation}</p>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
 
 export default function MoleculeCard({ compound, jobId, index }: MoleculeCardProps) {
     const [expanded, setExpanded] = useState(false);
@@ -73,24 +124,23 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
             try {
                 const data = await getScoreBreakdown(jobId, index);
                 setBreakdown(data);
-            } catch {
-                // non-critical
-            } finally {
-                setBreakdownLoading(false);
-            }
+            } catch { /* non-critical */ }
+            finally { setBreakdownLoading(false); }
         }
     };
 
     const ringStyle =
-        score >= 70
-            ? "border-emerald-500 text-emerald-400"
-            : score >= 45
-                ? "border-yellow-500 text-yellow-400"
-                : "border-red-600 text-red-400";
+        score >= 70 ? "border-emerald-500 text-emerald-400" :
+            score >= 45 ? "border-yellow-500 text-yellow-400" :
+                "border-red-600 text-red-400";
+
+    // ← Use flag_summary (string[]) for the compact badge count
+    const flagCount = compound.admet?.flag_summary?.length ?? compound.admet?.flags?.length ?? 0;
 
     return (
         <div className="card-hover animate-fade-in">
-            {/* ── Compact row ──────────────────────────────────────────────────── */}
+
+            {/* ── Compact row ──────────────────────────────────────────────── */}
             <div className="flex items-center gap-4">
 
                 {/* Rank + score ring */}
@@ -101,7 +151,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                     <p className="text-xs text-gray-600 mt-1">#{compound.rank}</p>
                 </div>
 
-                {/* SMILES + copy */}
+                {/* SMILES + badges */}
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                         <span className="smiles-display">{compound.canonical_smiles}</span>
@@ -125,7 +175,11 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                         )}
                         {compound.admet && (
                             <span className={compound.admet.passed ? "badge-pass" : "badge-warn"}>
-                                ADMET {compound.admet.flags.length === 0 ? "clean" : `${compound.admet.flags.length} flag${compound.admet.flags.length > 1 ? "s" : ""}`}
+                                {/* ← safe: only reads count, never renders object */}
+                                ADMET {flagCount === 0
+                                    ? "clean"
+                                    : `${flagCount} flag${flagCount > 1 ? "s" : ""}`
+                                }
                             </span>
                         )}
                         {compound.docking && (
@@ -137,7 +191,8 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                             <span className="text-xs text-gray-500">
                                 {compound.retrosynthesis.feasible
                                     ? `${compound.retrosynthesis.num_steps} synthesis steps`
-                                    : "synthesis: infeasible"}
+                                    : "synthesis: infeasible"
+                                }
                             </span>
                         )}
                     </div>
@@ -151,7 +206,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                 </button>
             </div>
 
-            {/* ── Expanded detail ───────────────────────────────────────────────── */}
+            {/* ── Expanded detail ───────────────────────────────────────────── */}
             {expanded && (
                 <div className="mt-4 pt-4 border-t border-gray-800 space-y-5 animate-slide-up">
 
@@ -165,7 +220,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
-                        {/* ── Drug-likeness ───────────────────────────────────────────── */}
+                        {/* ── Drug-likeness ──────────────────────────────────── */}
                         {compound.lipinski && (
                             <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
                                 <div className="flex items-center gap-1.5 mb-2">
@@ -175,36 +230,15 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                 </div>
                                 <div className="space-y-1.5">
                                     {[
-                                        {
-                                            label: "Mol. Weight", value: `${compound.lipinski.mw.toFixed(1)} Da`,
-                                            ok: compound.lipinski.mw <= 350,
-                                            tip: "Ideal: ≤350 Da. Heavier molecules struggle to cross cell membranes and absorb from the gut."
-                                        },
-                                        {
-                                            label: "LogP", value: compound.lipinski.logp.toFixed(2),
-                                            ok: compound.lipinski.logp <= 4.5,
-                                            tip: "Ideal: ≤4.5. Measures fat-solubility. Too high = won't dissolve in blood; too low = won't cross membranes."
-                                        },
-                                        {
-                                            label: "H-bond donors", value: compound.lipinski.hbd,
-                                            ok: compound.lipinski.hbd <= 5,
-                                            tip: "Ideal: ≤5. H-bond donors are -OH and -NH groups. Too many prevent absorption through the gut lining."
-                                        },
-                                        {
-                                            label: "H-bond acceptors", value: compound.lipinski.hba,
-                                            ok: compound.lipinski.hba <= 10,
-                                            tip: "Ideal: ≤10. H-bond acceptors are N and O atoms. Too many reduce oral bioavailability."
-                                        },
-                                        {
-                                            label: "LogS (solubility)", value: compound.lipinski.logs.toFixed(2),
-                                            ok: compound.lipinski.logs >= -4,
-                                            tip: "Ideal: > −4. Measures water solubility (ESOL model). More negative = less soluble in blood/gut fluid."
-                                        },
+                                        { label: "Mol. Weight", value: `${compound.lipinski.mw.toFixed(1)} Da`, ok: compound.lipinski.mw <= 350, tip: "Ideal: ≤350 Da. Heavier molecules struggle to cross cell membranes and absorb from the gut." },
+                                        { label: "LogP", value: compound.lipinski.logp.toFixed(2), ok: compound.lipinski.logp <= 4.5, tip: "Ideal: ≤4.5. Measures fat-solubility. Too high = won't dissolve in blood; too low = won't cross membranes." },
+                                        { label: "H-bond donors", value: compound.lipinski.hbd, ok: compound.lipinski.hbd <= 5, tip: "Ideal: ≤5. H-bond donors are -OH and -NH groups. Too many prevent absorption through the gut lining." },
+                                        { label: "H-bond acceptors", value: compound.lipinski.hba, ok: compound.lipinski.hba <= 10, tip: "Ideal: ≤10. H-bond acceptors are N and O atoms. Too many reduce oral bioavailability." },
+                                        { label: "LogS (solubility)", value: compound.lipinski.logs.toFixed(2), ok: compound.lipinski.logs >= -4, tip: "Ideal: > −4. Measures water solubility (ESOL model). More negative = less soluble in blood/gut fluid." },
                                     ].map(({ label, value, ok, tip }) => (
                                         <div key={label} className="flex justify-between text-xs items-center">
                                             <span className="text-gray-500 flex items-center">
-                                                {label}
-                                                <Tip text={tip} />
+                                                {label}<Tip text={tip} />
                                             </span>
                                             <span className={ok ? "text-emerald-400" : "text-yellow-400"}>{value}</span>
                                         </div>
@@ -212,15 +246,21 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                     <div className="flex justify-between text-xs pt-1 border-t border-gray-700 items-center">
                                         <span className="text-gray-500 flex items-center">
                                             Solubility class
-                                            <Tip text="High (LogS > 0), Medium (−2 to 0), Low (−4 to −2), Very Low (< −4). Low solubility drugs often need special delivery formulations." />
+                                            <Tip text="High (LogS > 0), Medium (−2 to 0), Low (−4 to −2), Very Low (< −4). Very Low solubility applies a score multiplier penalty." />
                                         </span>
-                                        <span className="text-gray-300">{compound.lipinski.solubility_class}</span>
+                                        <span className={
+                                            compound.lipinski.solubility_class === "Very Low" ? "text-red-400" :
+                                                compound.lipinski.solubility_class === "Low" ? "text-yellow-400" :
+                                                    "text-gray-300"
+                                        }>
+                                            {compound.lipinski.solubility_class}
+                                        </span>
                                     </div>
                                 </div>
                             </div>
                         )}
 
-                        {/* ── ADMET ──────────────────────────────────────────────────── */}
+                        {/* ── ADMET ──────────────────────────────────────────── */}
                         {compound.admet && (
                             <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
                                 <div className="flex items-center gap-1.5 mb-2">
@@ -230,52 +270,36 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                 </div>
                                 <div className="space-y-1.5">
                                     {[
-                                        {
-                                            label: "hERG inhibition", value: formatProbability(compound.admet.herg_inhibition),
-                                            risk: compound.admet.herg_inhibition > 0.5,
-                                            tip: "Ideal: <30%. Blocking the hERG channel causes fatal heart arrhythmia — the #1 reason drugs are withdrawn from markets."
-                                        },
-                                        {
-                                            label: "Hepatotoxicity", value: formatProbability(compound.admet.hepatotoxicity),
-                                            risk: compound.admet.hepatotoxicity > 0.5,
-                                            tip: "Ideal: <30%. Probability of liver cell damage. Liver toxicity is the #1 reason drugs fail FDA approval after Phase II trials."
-                                        },
-                                        {
-                                            label: "Oral bioavailability", value: formatProbability(compound.admet.oral_bioavailability),
-                                            risk: compound.admet.oral_bioavailability < 0.3,
-                                            tip: "Ideal: >70%. What percentage of the swallowed dose actually reaches the bloodstream. Low = drug mostly destroyed before reaching target."
-                                        },
-                                        {
-                                            label: "BBB penetration", value: formatProbability(compound.admet.bbb_penetration),
-                                            risk: false,
-                                            tip: "Blood-Brain Barrier penetration. Desirable for brain/CNS drugs, but a liability for non-CNS drugs (may cause neurological side effects)."
-                                        },
-                                        {
-                                            label: "Caco-2 permeability", value: compound.admet.caco2_permeability.toFixed(2),
-                                            risk: compound.admet.caco2_permeability < -5.15,
-                                            tip: "Ideal: > −5.15. Models how well the drug crosses intestinal wall cells (human colon cell line). Key predictor of oral absorption."
-                                        },
+                                        { label: "hERG inhibition", value: formatProbability(compound.admet.herg_inhibition), risk: compound.admet.herg_inhibition > 0.5, tip: "Ideal: <30%. Blocking the hERG channel causes fatal heart arrhythmia — the #1 reason drugs are withdrawn from markets." },
+                                        { label: "Hepatotoxicity", value: formatProbability(compound.admet.hepatotoxicity), risk: compound.admet.hepatotoxicity > 0.5, tip: "Ideal: <30%. Probability of liver cell damage. Liver toxicity is the #1 reason drugs fail FDA approval after Phase II trials." },
+                                        { label: "Oral bioavailability", value: formatProbability(compound.admet.oral_bioavailability), risk: compound.admet.oral_bioavailability < 0.3, tip: "Ideal: >70%. What percentage of the swallowed dose actually reaches the bloodstream. Low = drug mostly destroyed before reaching target." },
+                                        { label: "BBB penetration", value: formatProbability(compound.admet.bbb_penetration), risk: false, tip: "Blood-Brain Barrier penetration. Desirable for brain/CNS drugs, but a liability for non-CNS drugs (may cause neurological side effects)." },
+                                        { label: "Caco-2 permeability", value: compound.admet.caco2_permeability.toFixed(2), risk: compound.admet.caco2_permeability < -5.15, tip: "Ideal: > −5.15. Models how well the drug crosses intestinal wall cells (human colon cell line). Key predictor of oral absorption." },
                                     ].map(({ label, value, risk, tip }) => (
                                         <div key={label} className="flex justify-between text-xs items-center">
                                             <span className="text-gray-500 flex items-center">
-                                                {label}
-                                                <Tip text={tip} />
+                                                {label}<Tip text={tip} />
                                             </span>
                                             <span className={risk ? "text-red-400" : "text-emerald-400"}>{value}</span>
                                         </div>
                                     ))}
                                 </div>
+
+                                {/* ← FIXED: flags is ADMETFlagDetail[] — use ADMETFlagCard, not <p>{flag}</p> */}
                                 {compound.admet.flags.length > 0 && (
-                                    <div className="mt-2 pt-2 border-t border-gray-700 space-y-1">
-                                        {compound.admet.flags.map((flag) => (
-                                            <p key={flag} className="text-xs text-red-400">⚠ {flag}</p>
+                                    <div className="mt-2 pt-2 border-t border-gray-700 space-y-1.5">
+                                        <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-1">
+                                            Flags — click to expand
+                                        </p>
+                                        {compound.admet.flags.map((flag, i) => (
+                                            <ADMETFlagCard key={i} flag={flag} />
                                         ))}
                                     </div>
                                 )}
                             </div>
                         )}
 
-                        {/* ── Docking ─────────────────────────────────────────────────── */}
+                        {/* ── Docking ────────────────────────────────────────── */}
                         {compound.docking && (
                             <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
                                 <div className="flex items-center gap-1.5 mb-2">
@@ -320,7 +344,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                             </div>
                         )}
 
-                        {/* ── Retrosynthesis ──────────────────────────────────────────── */}
+                        {/* ── Retrosynthesis ─────────────────────────────────── */}
                         {compound.retrosynthesis && (
                             <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
                                 <div className="flex items-center gap-1.5 mb-2">
@@ -350,7 +374,9 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                         </div>
                                         {compound.retrosynthesis.route.map((step) => (
                                             <div key={step.step_number} className="mt-2 pt-2 border-t border-gray-700">
-                                                <p className="text-xs text-gray-500 mb-1">Step {step.step_number} — confidence {(step.confidence * 100).toFixed(0)}%</p>
+                                                <p className="text-xs text-gray-500 mb-1">
+                                                    Step {step.step_number} — confidence {(step.confidence * 100).toFixed(0)}%
+                                                </p>
                                                 <div className="space-y-0.5">
                                                     {step.starting_materials.map((smi, i) => (
                                                         <p key={i} className="font-mono text-xs text-emerald-400 bg-gray-900 px-2 py-0.5 rounded truncate">
@@ -368,7 +394,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                         )}
                     </div>
 
-                    {/* ── Score breakdown ──────────────────────────────────────────── */}
+                    {/* ── Score breakdown ──────────────────────────────────────── */}
                     {breakdownLoading && (
                         <div className="flex items-center gap-2 text-xs text-gray-600">
                             <div className="w-3 h-3 border border-gray-600 border-t-gray-400 rounded-full animate-spin" />
@@ -380,7 +406,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                             <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Score Breakdown</p>
                             <div className="space-y-2">
                                 {Object.entries(breakdown)
-                                    .filter(([k]) => k !== "final_score")
+                                    .filter(([k]) => k !== "final_score" && k !== "mw_fragment_penalty")
                                     .map(([key, val]) => {
                                         if (!val || typeof val !== "object") return null;
                                         const item = val as { raw: string; contribution: number; max_possible: number };
@@ -398,7 +424,10 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                                 </div>
                                                 <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
                                                     <div
-                                                        className={`h-full rounded-full transition-all ${pct >= 70 ? "bg-emerald-600" : pct >= 40 ? "bg-yellow-600" : "bg-red-700"}`}
+                                                        className={`h-full rounded-full transition-all ${pct >= 70 ? "bg-emerald-600" :
+                                                            pct >= 40 ? "bg-yellow-600" :
+                                                                "bg-red-700"
+                                                            }`}
                                                         style={{ width: `${pct}%` }}
                                                     />
                                                 </div>
@@ -407,6 +436,10 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                         );
                                     })}
                             </div>
+                            {/* Penalty notices */}
+                            {breakdown.mw_fragment_penalty === true && (
+                                <p className="text-xs text-yellow-500 mt-2">⚠ Fragment penalty applied (MW &lt; 200 Da) — score halved.</p>
+                            )}
                         </div>
                     )}
                 </div>

@@ -10,8 +10,6 @@ export type DockingSpeed = "fast" | "balanced" | "thorough";
 export type BindingSiteMode = "auto" | "coordinates" | "residues";
 export type StepStatus = "waiting" | "running" | "done" | "skipped" | "failed";
 export type JobStatus = "queued" | "running" | "done" | "failed";
-
-// ← NEW
 export type SolubilityFilterMode = "soluble_only" | "allow_slightly" | "all";
 
 
@@ -45,18 +43,10 @@ export interface JobRequest {
     smiles: string;
     pdb_id?: string;
     pdb_content?: string;
-
-    // ← was: 0 | 10 | 25 | 50  — now any integer 0–1000
     num_analogues: number;
-
     direct_score_only?: boolean;
-
-    // ← NEW: solubility filter applied at analogue generation time
     solubility_filter?: SolubilityFilterMode;
-
-    // ← NEW: skip everything except ADMET — no PDB required
     toxicity_report_only?: boolean;
-
     pipeline_steps: PipelineSteps;
     binding_site_mode: BindingSiteMode;
     binding_site_coords?: BindingSiteCoords;
@@ -107,19 +97,16 @@ export interface LipinskiResult {
     solubility_class: string;
 }
 
-// ← NEW: structured ADMET flag object (was plain string)
 export interface ADMETFlagDetail {
-    property_name: string;   // e.g. "hERG Inhibition"
-    value: number;   // e.g. 0.87
-    threshold: string;   // e.g. ">0.50"
-    direction: string;   // "above" | "below"
+    property_name: string;
+    value: number;
+    threshold: string;
+    direction: string;
     severity: "high" | "moderate" | "low";
-    implication: string;   // e.g. "cardiac arrhythmia / QT prolongation risk"
-    recommendation: string;   // redesign suggestion
+    implication: string;
+    recommendation: string;
 }
 
-// ← flags changed from string[] to ADMETFlagDetail[]
-// ← flag_summary added as plain-English one-liners for badges
 export interface ADMETResult {
     passed: boolean;
     herg_inhibition: number;
@@ -212,6 +199,8 @@ export interface ScoreBreakdown {
     admet_safety?: ScoreBreakdownItem;
     solubility?: ScoreBreakdownItem;
     synthesis_ease?: ScoreBreakdownItem;
+    binding_prefilter?: ScoreBreakdownItem; // ← added
+    mw_fragment_penalty?: boolean;            // ← added
     final_score?: number;
 }
 
@@ -234,19 +223,16 @@ export async function submitJob(request: JobRequest): Promise<JobSubmitResponse>
 
 export async function submitJobWithFile(
     smiles: string,
-    // ← pdbFile is now nullable — not required when toxicity_report_only=true
     pdbFile: File | null,
     options: {
-        num_analogues: number;             // ← was 0|10|25|50, now any number
+        num_analogues: number;
         docking_speed: DockingSpeed;
         binding_site_mode: BindingSiteMode;
         pipeline_steps: PipelineSteps;
         direct_score_only?: boolean;
         mw_min?: number;
         mw_max?: number;
-        // null = "Ignore completely"; sent as -1, backend converts back to None
         max_lipinski_violations?: number | null;
-        // ← NEW
         solubility_filter?: SolubilityFilterMode;
         toxicity_report_only?: boolean;
     }
@@ -254,7 +240,6 @@ export async function submitJobWithFile(
     const formData = new FormData();
 
     formData.append("smiles", smiles);
-    // Only attach pdb_file if provided (toxicity_report_only jobs don't need it)
     if (pdbFile !== null) {
         formData.append("pdb_file", pdbFile);
     }
@@ -264,14 +249,12 @@ export async function submitJobWithFile(
     formData.append("direct_score_only", String(options.direct_score_only ?? false));
     formData.append("mw_min", String(options.mw_min ?? 200));
     formData.append("mw_max", String(options.mw_max ?? 500));
-    // null → -1 sentinel (FormData can't carry null; backend converts -1 → None)
     formData.append(
         "max_lipinski_violations",
         String(options.max_lipinski_violations === null
             ? -1
             : (options.max_lipinski_violations ?? 1))
     );
-    // ← NEW fields
     formData.append("solubility_filter", options.solubility_filter ?? "all");
     formData.append("toxicity_report_only", String(options.toxicity_report_only ?? false));
 
@@ -389,7 +372,6 @@ export function getAffinityColor(affinity: number): string {
     return "text-red-400";
 }
 
-// ← NEW: colour for ADMET flag severity badges
 export function getFlagSeverityColor(severity: "high" | "moderate" | "low"): string {
     if (severity === "high") return "text-red-400 bg-red-950/40 border-red-800";
     if (severity === "moderate") return "text-yellow-400 bg-yellow-950/40 border-yellow-800";
