@@ -2,7 +2,10 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, FlaskConical, Loader2, AlertCircle, CheckCircle2, ExternalLink, X } from "lucide-react";
+import {
+    Upload, FlaskConical, Loader2, AlertCircle,
+    CheckCircle2, ExternalLink, X, TestTube,
+} from "lucide-react";
 import AdvancedSettings from "./AdvancedSettings";
 import {
     submitJob,
@@ -14,9 +17,12 @@ import {
     type BindingSiteMode,
     type BindingSiteCoords,
     type BindingSiteResidues,
+    type SolubilityFilterMode,
 } from "@/lib/api";
 
+
 const MYRICETIN_SMILES = "OC1=CC(=CC(O)=C1O)C1=C(O)C(=O)C2=C(O)C(O)=CC(O)=C2O1";
+
 
 export default function InputForm() {
     const router = useRouter();
@@ -34,8 +40,13 @@ export default function InputForm() {
     const [pdbMetaLoading, setPdbMetaLoading] = useState(false);
 
     // ── Advanced settings state ───────────────────────────────────────────────
-    const [numAnalogues, setNumAnalogues] = useState<10 | 25 | 50>(25);
+    // ← was: 10 | 25 | 50
+    const [numAnalogues, setNumAnalogues] = useState<number>(25);
     const [directScoreOnly, setDirectScoreOnly] = useState(false);
+    // ← NEW
+    const [toxicityReportOnly, setToxicityReportOnly] = useState(false);
+    // ← NEW
+    const [solubilityFilter, setSolubilityFilter] = useState<SolubilityFilterMode>("all");
     const [pipelineSteps, setPipelineSteps] = useState<PipelineSteps>({
         drug_likeness: true,
         admet: true,
@@ -64,6 +75,7 @@ export default function InputForm() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const pdbDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+    // ── Side effects ──────────────────────────────────────────────────────────
     useEffect(() => { pingBackend().then(setBackendAwake); }, []);
 
     useEffect(() => {
@@ -78,50 +90,75 @@ export default function InputForm() {
         }, 600);
     }, [pdbId]);
 
+    // When toxicity-only is toggled on, mutually exclude direct-score mode
+    // (they're different "no-docking" paths — don't let both be true)
+    const handleToxicityReportOnlyChange = (v: boolean) => {
+        setToxicityReportOnly(v);
+        if (v) setDirectScoreOnly(false);
+    };
+
+    const handleDirectScoreOnlyChange = (v: boolean) => {
+        setDirectScoreOnly(v);
+        if (v) setToxicityReportOnly(false);
+    };
+
+    // ── Derived flags ─────────────────────────────────────────────────────────
+    // PDB is not required in toxicity-only mode
+    const pdbRequired = !toxicityReportOnly;
+
+    // ── Submit ────────────────────────────────────────────────────────────────
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError(null);
 
-        if (!smiles.trim()) { setError("SMILES string is required."); return; }
-        if (pdbMode === "id" && pdbId.trim().length !== 4) {
-            setError("PDB ID must be exactly 4 characters (e.g. 1HSG).");
+        if (!smiles.trim()) {
+            setError("SMILES string is required.");
             return;
         }
-        if (pdbMode === "file" && !pdbFile) {
-            setError("Please upload a .pdb file.");
-            return;
+
+        // PDB validation only when docking is going to run
+        if (pdbRequired) {
+            if (pdbMode === "id" && pdbId.trim().length !== 4) {
+                setError("PDB ID must be exactly 4 characters (e.g. 1HSG).");
+                return;
+            }
+            if (pdbMode === "file" && !pdbFile) {
+                setError("Please upload a .pdb file.");
+                return;
+            }
         }
 
         setSubmitting(true);
         try {
+            const sharedOptions = {
+                num_analogues: directScoreOnly ? 0 : numAnalogues,
+                docking_speed: dockingSpeed,
+                binding_site_mode: bindingSiteMode,
+                pipeline_steps: pipelineSteps,
+                direct_score_only: directScoreOnly,
+                mw_min: mwMin,
+                mw_max: mwMax,
+                max_lipinski_violations: maxLipinskiViolations,
+                solubility_filter: solubilityFilter,        // ← NEW
+                toxicity_report_only: toxicityReportOnly,      // ← NEW
+            };
+
             let response;
-            if (pdbMode === "file" && pdbFile) {
-                response = await submitJobWithFile(smiles, pdbFile, {
-                    num_analogues: directScoreOnly ? 0 : numAnalogues,
-                    docking_speed: dockingSpeed,
-                    binding_site_mode: bindingSiteMode,
-                    pipeline_steps: pipelineSteps,
-                    direct_score_only: directScoreOnly,
-                    mw_min: mwMin,
-                    mw_max: mwMax,
-                    max_lipinski_violations: maxLipinskiViolations,
-                });
+
+            if (pdbMode === "file") {
+                // pdbFile is null when toxicity_report_only — submitJobWithFile handles that
+                response = await submitJobWithFile(smiles, pdbFile, sharedOptions);
             } else {
                 response = await submitJob({
                     smiles,
-                    pdb_id: pdbId.toUpperCase(),
-                    num_analogues: directScoreOnly ? 0 : numAnalogues,
-                    direct_score_only: directScoreOnly,
-                    pipeline_steps: pipelineSteps,
-                    binding_site_mode: bindingSiteMode,
+                    // Only include pdb_id when PDB is needed
+                    ...(pdbRequired && pdbId ? { pdb_id: pdbId.toUpperCase() } : {}),
+                    ...sharedOptions,
                     binding_site_coords: bindingSiteMode === "coordinates" ? bindingSiteCoords : undefined,
                     binding_site_residues: bindingSiteMode === "residues" ? bindingSiteResidues : undefined,
-                    docking_speed: dockingSpeed,
-                    mw_min: mwMin,
-                    mw_max: mwMax,
-                    max_lipinski_violations: maxLipinskiViolations,
                 });
             }
+
             router.push(`/status/${response.job_id}`);
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : "Submission failed. Try again.");
@@ -129,23 +166,39 @@ export default function InputForm() {
         }
     };
 
+    // ── Render ────────────────────────────────────────────────────────────────
     return (
         <form onSubmit={handleSubmit} className="space-y-6">
 
-            {/* ── Backend status banner ───────────────────────────────────── */}
+            {/* ── Backend status banner ────────────────────────────────────── */}
             {backendAwake === false && (
                 <div className="flex items-start gap-3 p-4 rounded-xl bg-yellow-950/30 border border-yellow-800/50">
                     <AlertCircle className="w-4 h-4 text-yellow-400 mt-0.5 flex-shrink-0" />
                     <div className="text-sm">
                         <p className="text-yellow-300 font-medium">Backend is waking up</p>
                         <p className="text-yellow-600 mt-0.5">
-                            The Hugging Face Space may be sleeping. First request takes ~60s. You can still submit — it will queue automatically.
+                            The Hugging Face Space may be sleeping. First request takes ~60s.
+                            You can still submit — it will queue automatically.
                         </p>
                     </div>
                 </div>
             )}
 
-            {/* ── SMILES input ────────────────────────────────────────────── */}
+            {/* ── Toxicity-only info banner ────────────────────────────────── */}
+            {toxicityReportOnly && (
+                <div className="flex items-start gap-3 p-4 rounded-xl bg-red-950/20 border border-red-800/40 animate-slide-up">
+                    <TestTube className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
+                    <div className="text-sm">
+                        <p className="text-red-300 font-medium">Toxicity Report mode active</p>
+                        <p className="text-red-700 mt-0.5">
+                            Only ADMET toxicity analysis will run. Docking and retrosynthesis
+                            are skipped. No protein structure required.
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            {/* ── SMILES input ─────────────────────────────────────────────── */}
             <div className="card">
                 <label className="block text-sm font-medium text-gray-300 mb-1">
                     Base Compound SMILES
@@ -154,7 +207,10 @@ export default function InputForm() {
                 <p className="text-xs text-gray-500 mb-3">
                     {directScoreOnly
                         ? "This exact compound will be scored through the full pipeline (no analogues generated)."
-                        : "Enter the SMILES string of your base compound. Analogues will be generated from this scaffold."}
+                        : toxicityReportOnly
+                            ? "This compound (and any analogues you request) will be screened for ADMET toxicity."
+                            : "Enter the SMILES string of your base compound. Analogues will be generated from this scaffold."
+                    }
                 </p>
                 <div className="relative">
                     <textarea
@@ -193,85 +249,92 @@ export default function InputForm() {
                 </div>
             </div>
 
-            {/* ── Target Protein ──────────────────────────────────────────── */}
-            <div className="card">
-                <label className="block text-sm font-medium text-gray-300 mb-1">
-                    Target Protein
-                    <span className="ml-2 text-xs text-gray-500 font-normal">required</span>
-                </label>
-                <p className="text-xs text-gray-500 mb-3">
-                    Provide the protein structure to dock against.
-                </p>
+            {/* ── Target Protein ───────────────────────────────────────────── */}
+            {/* Hidden entirely in toxicity-only mode — no PDB needed */}
+            {pdbRequired && (
+                <div className="card">
+                    <label className="block text-sm font-medium text-gray-300 mb-1">
+                        Target Protein
+                        <span className="ml-2 text-xs text-gray-500 font-normal">required</span>
+                    </label>
+                    <p className="text-xs text-gray-500 mb-3">
+                        Provide the protein structure to dock against.
+                    </p>
 
-                {/* Mode tabs */}
-                <div className="flex gap-1 p-1 bg-gray-800 rounded-lg w-fit mb-4">
-                    {(["id", "file"] as const).map((mode) => (
-                        <button
-                            key={mode}
-                            type="button"
-                            onClick={() => setPdbMode(mode)}
-                            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${pdbMode === mode
-                                    ? "bg-gray-700 text-gray-100"
-                                    : "text-gray-500 hover:text-gray-300"
-                                }`}
-                        >
-                            {mode === "id" ? "PDB ID" : "Upload File"}
-                        </button>
-                    ))}
-                </div>
+                    {/* Mode tabs */}
+                    <div className="flex gap-1 p-1 bg-gray-800 rounded-lg w-fit mb-4">
+                        {(["id", "file"] as const).map((mode) => (
+                            <button
+                                key={mode}
+                                type="button"
+                                onClick={() => setPdbMode(mode)}
+                                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${pdbMode === mode
+                                        ? "bg-gray-700 text-gray-100"
+                                        : "text-gray-500 hover:text-gray-300"
+                                    }`}
+                            >
+                                {mode === "id" ? "PDB ID" : "Upload File"}
+                            </button>
+                        ))}
+                    </div>
 
-                {pdbMode === "id" && (
-                    <div>
-                        <div className="relative">
-                            <input
-                                type="text"
-                                className="input-base font-mono uppercase pr-10"
-                                value={pdbId}
-                                onChange={(e) => setPdbId(e.target.value.toUpperCase().slice(0, 4))}
-                                placeholder="e.g. 1HSG"
-                                maxLength={4}
-                            />
-                            {pdbMetaLoading && (
-                                <Loader2 className="absolute right-3 top-2.5 w-4 h-4 text-gray-500 animate-spin" />
+                    {pdbMode === "id" && (
+                        <div>
+                            <div className="relative">
+                                <input
+                                    type="text"
+                                    className="input-base font-mono uppercase pr-10"
+                                    value={pdbId}
+                                    onChange={(e) => setPdbId(e.target.value.toUpperCase().slice(0, 4))}
+                                    placeholder="e.g. 1HSG"
+                                    maxLength={4}
+                                />
+                                {pdbMetaLoading && (
+                                    <Loader2 className="absolute right-3 top-2.5 w-4 h-4 text-gray-500 animate-spin" />
+                                )}
+                                {pdbMeta && !pdbMetaLoading && (
+                                    <CheckCircle2 className="absolute right-3 top-2.5 w-4 h-4 text-emerald-500" />
+                                )}
+                            </div>
+
+                            {pdbMeta && (
+                                <div className="mt-2 p-3 rounded-lg bg-emerald-950/20 border border-emerald-900/40 animate-slide-up">
+                                    <p className="text-sm text-emerald-300 font-medium truncate">
+                                        {pdbMeta.title}
+                                    </p>
+                                    <div className="flex gap-4 mt-1">
+                                        {pdbMeta.resolution_angstrom && (
+                                            <span className="text-xs text-gray-500">
+                                                Resolution{" "}
+                                                <span className="text-gray-400">
+                                                    {pdbMeta.resolution_angstrom}Å
+                                                </span>
+                                            </span>
+                                        )}
+                                        <span className="text-xs text-gray-500">
+                                            Chains{" "}
+                                            <span className="text-gray-400">{pdbMeta.protein_chains}</span>
+                                        </span>
+                                        <a
+                                            href={`https://www.rcsb.org/structure/${pdbId}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-xs text-emerald-600 hover:text-emerald-500 flex items-center gap-1"
+                                        >
+                                            View on RCSB <ExternalLink className="w-3 h-3" />
+                                        </a>
+                                    </div>
+                                </div>
                             )}
-                            {pdbMeta && !pdbMetaLoading && (
-                                <CheckCircle2 className="absolute right-3 top-2.5 w-4 h-4 text-emerald-500" />
+                            {pdbId.length === 4 && !pdbMeta && !pdbMetaLoading && (
+                                <p className="mt-1 text-xs text-red-400">
+                                    PDB ID not found. Check the ID at rcsb.org.
+                                </p>
                             )}
                         </div>
+                    )}
 
-                        {pdbMeta && (
-                            <div className="mt-2 p-3 rounded-lg bg-emerald-950/20 border border-emerald-900/40 animate-slide-up">
-                                <p className="text-sm text-emerald-300 font-medium truncate">{pdbMeta.title}</p>
-                                <div className="flex gap-4 mt-1">
-                                    {pdbMeta.resolution_angstrom && (
-                                        <span className="text-xs text-gray-500">
-                                            Resolution <span className="text-gray-400">{pdbMeta.resolution_angstrom}Å</span>
-                                        </span>
-                                    )}
-                                    <span className="text-xs text-gray-500">
-                                        Chains <span className="text-gray-400">{pdbMeta.protein_chains}</span>
-                                    </span>
-                                    <a
-                                        href={`https://www.rcsb.org/structure/${pdbId}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-xs text-emerald-600 hover:text-emerald-500 flex items-center gap-1"
-                                    >
-                                        View on RCSB <ExternalLink className="w-3 h-3" />
-                                    </a>
-                                </div>
-                            </div>
-                        )}
-                        {pdbId.length === 4 && !pdbMeta && !pdbMetaLoading && (
-                            <p className="mt-1 text-xs text-red-400">
-                                PDB ID not found. Check the ID at rcsb.org.
-                            </p>
-                        )}
-                    </div>
-                )}
-
-                {pdbMode === "file" && (
-                    <div>
+                    {pdbMode === "file" && (
                         <div
                             onClick={() => fileInputRef.current?.click()}
                             className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${pdbFile
@@ -311,16 +374,20 @@ export default function InputForm() {
                                 </>
                             )}
                         </div>
-                    </div>
-                )}
-            </div>
+                    )}
+                </div>
+            )}
 
-            {/* ── Advanced settings ───────────────────────────────────────── */}
+            {/* ── Advanced settings ────────────────────────────────────────── */}
             <AdvancedSettings
                 numAnalogues={numAnalogues}
                 onNumAnaloguesChange={setNumAnalogues}
                 directScoreOnly={directScoreOnly}
-                onDirectScoreOnlyChange={setDirectScoreOnly}
+                onDirectScoreOnlyChange={handleDirectScoreOnlyChange}
+                toxicityReportOnly={toxicityReportOnly}
+                onToxicityReportOnlyChange={handleToxicityReportOnlyChange}
+                solubilityFilter={solubilityFilter}
+                onSolubilityFilterChange={setSolubilityFilter}
                 pipelineSteps={pipelineSteps}
                 onPipelineStepsChange={setPipelineSteps}
                 dockingSpeed={dockingSpeed}
@@ -339,7 +406,7 @@ export default function InputForm() {
                 onMaxLipinskiViolationsChange={setMaxLipinskiViolations}
             />
 
-            {/* ── Error message ───────────────────────────────────────────── */}
+            {/* ── Error message ─────────────────────────────────────────────── */}
             {error && (
                 <div className="flex items-start gap-3 p-4 rounded-xl bg-red-950/30 border border-red-800/50 animate-slide-up">
                     <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
@@ -347,7 +414,7 @@ export default function InputForm() {
                 </div>
             )}
 
-            {/* ── Submit button ───────────────────────────────────────────── */}
+            {/* ── Submit button ─────────────────────────────────────────────── */}
             <button
                 type="submit"
                 disabled={submitting}
@@ -355,16 +422,24 @@ export default function InputForm() {
             >
                 {submitting ? (
                     <><Loader2 className="w-5 h-5 animate-spin" /> Submitting pipeline job...</>
+                ) : toxicityReportOnly ? (
+                    <><TestTube className="w-5 h-5" /> Run Toxicity Report</>
                 ) : directScoreOnly ? (
                     <><FlaskConical className="w-5 h-5" /> Score This Compound Directly</>
                 ) : (
                     <><FlaskConical className="w-5 h-5" /> Run CADD Pipeline</>
                 )}
             </button>
+
             <p className="text-xs text-gray-600 text-center">
-                {directScoreOnly
-                    ? "Direct scoring skips analogue generation — results in 5–15 minutes."
-                    : "Pipeline takes 30–60 minutes depending on settings. You'll get a tracking URL immediately."}
+                {toxicityReportOnly
+                    ? "Toxicity report only — ADMET screening completes in ~2–5 minutes."
+                    : directScoreOnly
+                        ? "Direct scoring skips analogue generation — results in 5–15 minutes."
+                        : numAnalogues >= 500
+                            ? `${numAnalogues} analogues requested — pipeline may take 60–90 minutes.`
+                            : "Pipeline takes 30–60 minutes depending on settings. You'll get a tracking URL immediately."
+                }
             </p>
 
         </form>

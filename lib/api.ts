@@ -4,12 +4,18 @@
 const BACKEND_URL = "https://novoo5-cadd-backend.hf.space";
 
 
-// ── Types (mirror backend Pydantic schemas) ───────────────────────────────────
+// ── Enums / union types ───────────────────────────────────────────────────────
 
 export type DockingSpeed = "fast" | "balanced" | "thorough";
 export type BindingSiteMode = "auto" | "coordinates" | "residues";
 export type StepStatus = "waiting" | "running" | "done" | "skipped" | "failed";
 export type JobStatus = "queued" | "running" | "done" | "failed";
+
+// ← NEW
+export type SolubilityFilterMode = "soluble_only" | "allow_slightly" | "all";
+
+
+// ── Pipeline config types ─────────────────────────────────────────────────────
 
 export interface PipelineSteps {
     drug_likeness: boolean;
@@ -32,12 +38,25 @@ export interface BindingSiteResidues {
     residue_end: number;
 }
 
+
+// ── Job request ───────────────────────────────────────────────────────────────
+
 export interface JobRequest {
     smiles: string;
     pdb_id?: string;
     pdb_content?: string;
-    num_analogues: 0 | 10 | 25 | 50;
+
+    // ← was: 0 | 10 | 25 | 50  — now any integer 0–1000
+    num_analogues: number;
+
     direct_score_only?: boolean;
+
+    // ← NEW: solubility filter applied at analogue generation time
+    solubility_filter?: SolubilityFilterMode;
+
+    // ← NEW: skip everything except ADMET — no PDB required
+    toxicity_report_only?: boolean;
+
     pipeline_steps: PipelineSteps;
     binding_site_mode: BindingSiteMode;
     binding_site_coords?: BindingSiteCoords;
@@ -48,6 +67,9 @@ export interface JobRequest {
     // null = "Ignore completely" — all compounds pass regardless of violations
     max_lipinski_violations?: number | null;
 }
+
+
+// ── Response types ────────────────────────────────────────────────────────────
 
 export interface JobSubmitResponse {
     job_id: string;
@@ -72,6 +94,9 @@ export interface JobStatusResponse {
     error?: string;
 }
 
+
+// ── Pipeline result types ─────────────────────────────────────────────────────
+
 export interface LipinskiResult {
     passed: boolean;
     mw: number;
@@ -82,6 +107,19 @@ export interface LipinskiResult {
     solubility_class: string;
 }
 
+// ← NEW: structured ADMET flag object (was plain string)
+export interface ADMETFlagDetail {
+    property_name: string;   // e.g. "hERG Inhibition"
+    value: number;   // e.g. 0.87
+    threshold: string;   // e.g. ">0.50"
+    direction: string;   // "above" | "below"
+    severity: "high" | "moderate" | "low";
+    implication: string;   // e.g. "cardiac arrhythmia / QT prolongation risk"
+    recommendation: string;   // redesign suggestion
+}
+
+// ← flags changed from string[] to ADMETFlagDetail[]
+// ← flag_summary added as plain-English one-liners for badges
 export interface ADMETResult {
     passed: boolean;
     herg_inhibition: number;
@@ -89,7 +127,8 @@ export interface ADMETResult {
     bbb_penetration: number;
     hepatotoxicity: number;
     oral_bioavailability: number;
-    flags: string[];
+    flags: ADMETFlagDetail[];
+    flag_summary: string[];
 }
 
 export interface BindingPrefilterResult {
@@ -192,36 +231,49 @@ export async function submitJob(request: JobRequest): Promise<JobSubmitResponse>
     return response.json();
 }
 
+
 export async function submitJobWithFile(
     smiles: string,
-    pdbFile: File,
+    // ← pdbFile is now nullable — not required when toxicity_report_only=true
+    pdbFile: File | null,
     options: {
-        num_analogues: 0 | 10 | 25 | 50;
+        num_analogues: number;             // ← was 0|10|25|50, now any number
         docking_speed: DockingSpeed;
         binding_site_mode: BindingSiteMode;
         pipeline_steps: PipelineSteps;
         direct_score_only?: boolean;
         mw_min?: number;
         mw_max?: number;
-        // null = "Ignore completely"; sent as -1 over FormData, backend converts back to None
+        // null = "Ignore completely"; sent as -1, backend converts back to None
         max_lipinski_violations?: number | null;
+        // ← NEW
+        solubility_filter?: SolubilityFilterMode;
+        toxicity_report_only?: boolean;
     }
 ): Promise<JobSubmitResponse> {
     const formData = new FormData();
+
     formData.append("smiles", smiles);
-    formData.append("pdb_file", pdbFile);
+    // Only attach pdb_file if provided (toxicity_report_only jobs don't need it)
+    if (pdbFile !== null) {
+        formData.append("pdb_file", pdbFile);
+    }
     formData.append("num_analogues", String(options.num_analogues));
     formData.append("docking_speed", options.docking_speed);
     formData.append("binding_site_mode", options.binding_site_mode);
-    formData.append("pipeline_steps", JSON.stringify(options.pipeline_steps));
     formData.append("direct_score_only", String(options.direct_score_only ?? false));
     formData.append("mw_min", String(options.mw_min ?? 200));
     formData.append("mw_max", String(options.mw_max ?? 500));
     // null → -1 sentinel (FormData can't carry null; backend converts -1 → None)
     formData.append(
         "max_lipinski_violations",
-        String(options.max_lipinski_violations === null ? -1 : (options.max_lipinski_violations ?? 1))
+        String(options.max_lipinski_violations === null
+            ? -1
+            : (options.max_lipinski_violations ?? 1))
     );
+    // ← NEW fields
+    formData.append("solubility_filter", options.solubility_filter ?? "all");
+    formData.append("toxicity_report_only", String(options.toxicity_report_only ?? false));
 
     const response = await fetch(`${BACKEND_URL}/api/v1/jobs/upload`, {
         method: "POST",
@@ -234,16 +286,19 @@ export async function submitJobWithFile(
     return response.json();
 }
 
+
 export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
     const response = await fetch(`${BACKEND_URL}/api/v1/jobs/${jobId}/status`, {
         cache: "no-store",
     });
     if (!response.ok) {
-        if (response.status === 404) throw new Error(`Job '${jobId}' not found. It may have expired.`);
+        if (response.status === 404)
+            throw new Error(`Job '${jobId}' not found. It may have expired.`);
         throw new Error(`Status fetch failed: HTTP ${response.status}`);
     }
     return response.json();
 }
+
 
 export async function getJobResults(jobId: string): Promise<JobResultsResponse | null> {
     const response = await fetch(`${BACKEND_URL}/api/v1/jobs/${jobId}/results`, {
@@ -257,17 +312,20 @@ export async function getJobResults(jobId: string): Promise<JobResultsResponse |
     return response.json();
 }
 
+
 export async function getScoreBreakdown(
     jobId: string,
-    compoundIndex: number
+    compoundIndex: number,
 ): Promise<ScoreBreakdown> {
     const response = await fetch(
         `${BACKEND_URL}/api/v1/jobs/${jobId}/score-breakdown/${compoundIndex}`,
-        { cache: "no-store" }
+        { cache: "no-store" },
     );
-    if (!response.ok) throw new Error(`Score breakdown fetch failed: HTTP ${response.status}`);
+    if (!response.ok)
+        throw new Error(`Score breakdown fetch failed: HTTP ${response.status}`);
     return response.json();
 }
+
 
 export async function pingBackend(): Promise<boolean> {
     try {
@@ -281,20 +339,21 @@ export async function pingBackend(): Promise<boolean> {
     }
 }
 
+
 export async function fetchPdbMetadata(
-    pdbId: string
+    pdbId: string,
 ): Promise<{ title: string; resolution_angstrom: number | null; protein_chains: number } | null> {
     try {
         const query = `
-    {
-      entry(entry_id: "${pdbId.toUpperCase()}") {
-        struct { title }
-        rcsb_entry_info {
-          resolution_combined
-          polymer_entity_count_protein
-        }
-      }
-    }`;
+        {
+          entry(entry_id: "${pdbId.toUpperCase()}") {
+            struct { title }
+            rcsb_entry_info {
+              resolution_combined
+              polymer_entity_count_protein
+            }
+          }
+        }`;
         const response = await fetch("https://data.rcsb.org/graphql", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -328,6 +387,13 @@ export function getAffinityColor(affinity: number): string {
     if (affinity <= -8.0) return "text-emerald-400";
     if (affinity <= -6.0) return "text-yellow-400";
     return "text-red-400";
+}
+
+// ← NEW: colour for ADMET flag severity badges
+export function getFlagSeverityColor(severity: "high" | "moderate" | "low"): string {
+    if (severity === "high") return "text-red-400 bg-red-950/40 border-red-800";
+    if (severity === "moderate") return "text-yellow-400 bg-yellow-950/40 border-yellow-800";
+    return "text-gray-400 bg-gray-800/40 border-gray-700";
 }
 
 export function formatProbability(value: number): string {
