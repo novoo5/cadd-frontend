@@ -1,7 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronUp, Info, Zap, FlaskConical, CheckCircle2 } from "lucide-react";
+import {
+    ChevronDown, ChevronUp, Info, Zap, FlaskConical,
+    CheckCircle2, Lock, X,
+} from "lucide-react";
 import type {
     PipelineSteps,
     DockingSpeed,
@@ -15,7 +18,6 @@ import type {
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface AdvancedSettingsProps {
-    // ← was: 10 | 25 | 50  — now any number 1–10000
     numAnalogues: number;
     onNumAnaloguesChange: (v: number) => void;
 
@@ -42,17 +44,17 @@ interface AdvancedSettingsProps {
     onMwMinChange: (v: number) => void;
     onMwMaxChange: (v: number) => void;
 
-    // null = "Ignore completely"
     maxLipinskiViolations: number | null;
     onMaxLipinskiViolationsChange: (v: number | null) => void;
 
-    // ← NEW
     solubilityFilter: SolubilityFilterMode;
     onSolubilityFilterChange: (v: SolubilityFilterMode) => void;
 
-    // ← NEW
     toxicityReportOnly: boolean;
     onToxicityReportOnlyChange: (v: boolean) => void;
+
+    lockedScaffoldSmarts: string;              // ← NEW
+    onLockedScaffoldSmartsChange: (v: string) => void; // ← NEW
 }
 
 
@@ -93,15 +95,15 @@ const STEPS: {
     ];
 
 const DOCKING_SPEEDS: { value: DockingSpeed; label: string; desc: string }[] = [
-    { value: "fast",     label: "Fast",     desc: "exhaustiveness=8, ~5 min/compound" },
+    { value: "fast", label: "Fast", desc: "exhaustiveness=8, ~5 min/compound" },
     { value: "balanced", label: "Balanced", desc: "exhaustiveness=16, ~10 min/compound" },
     { value: "thorough", label: "Thorough", desc: "exhaustiveness=32, ~20 min/compound" },
 ];
 
 const VIOLATION_OPTIONS: { value: string; label: string }[] = [
-    { value: "1",    label: "Strict — ≤1 violation (classic RO5)" },
-    { value: "2",    label: "Relaxed — ≤2 violations" },
-    { value: "3",    label: "Lenient — ≤3 violations" },
+    { value: "1", label: "Strict — ≤1 violation (classic RO5)" },
+    { value: "2", label: "Relaxed — ≤2 violations" },
+    { value: "3", label: "Lenient — ≤3 violations" },
     { value: "null", label: "Ignore completely (no filter)" },
 ];
 
@@ -131,7 +133,34 @@ const SOLUBILITY_OPTIONS: {
         },
     ];
 
-// Quick-select counts shown as buttons
+const SCAFFOLD_PRESETS: { label: string; smarts: string; hint: string }[] = [
+    {
+        label: "Quinolone (fluoroquinolones)",
+        smarts: "c1ccc2c(c1)C(=O)c1ccccc1N2",
+        hint: "Locks the bicyclic quinolone ring — preserves antibiotic pharmacophore",
+    },
+    {
+        label: "Benzimidazole",
+        smarts: "c1ccc2[nH]cnc2c1",
+        hint: "Locks the fused benzimidazole core",
+    },
+    {
+        label: "Flavone / Quercetin core",
+        smarts: "O=c1cc(-c2ccccc2)oc2ccccc12",
+        hint: "Locks the 2-phenyl-4H-chromen-4-one scaffold",
+    },
+    {
+        label: "Purine (kinase hinge)",
+        smarts: "c1nc2[nH]cnc2n1",
+        hint: "Locks adenine-like purine scaffold for kinase binding",
+    },
+    {
+        label: "Indole",
+        smarts: "c1ccc2[nH]ccc2c1",
+        hint: "Locks the bicyclic indole ring system",
+    },
+];
+
 const ANALOGUE_PRESETS = [25, 50, 100, 500, 1000] as const;
 
 
@@ -162,8 +191,11 @@ export default function AdvancedSettings({
     onSolubilityFilterChange,
     toxicityReportOnly,
     onToxicityReportOnlyChange,
+    lockedScaffoldSmarts,
+    onLockedScaffoldSmartsChange,
 }: AdvancedSettingsProps) {
     const [open, setOpen] = useState(false);
+    const [scaffoldPresetOpen, setScaffoldPresetOpen] = useState(false);  // ← NEW
 
     const toggleStep = (key: keyof PipelineSteps) => {
         if (key === "drug_likeness") return;
@@ -198,6 +230,12 @@ export default function AdvancedSettings({
                     {toxicityReportOnly && (
                         <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-900/50 border border-red-700 text-red-300">
                             <FlaskConical className="w-2.5 h-2.5" /> Toxicity Only
+                        </span>
+                    )}
+                    {/* ← NEW: amber badge when scaffold lock is active */}
+                    {lockedScaffoldSmarts.trim() && (
+                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-900/50 border border-amber-700 text-amber-300">
+                            <Lock className="w-2.5 h-2.5" /> Scaffold Lock
                         </span>
                     )}
                 </span>
@@ -274,7 +312,7 @@ export default function AdvancedSettings({
                         </div>
                     </div>
 
-                    {/* ── 3. Number of analogues (1–10000) ────────────────── */}
+                    {/* ── 3. Number of analogues ───────────────────────────── */}
                     <div className={analoguesDisabled ? "opacity-40 pointer-events-none" : ""}>
                         <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
                             Analogues to Generate
@@ -284,8 +322,6 @@ export default function AdvancedSettings({
                                 </span>
                             )}
                         </label>
-
-                        {/* Quick-select presets */}
                         <div className="flex gap-2 mb-2">
                             {ANALOGUE_PRESETS.map((n) => (
                                 <button
@@ -301,8 +337,6 @@ export default function AdvancedSettings({
                                 </button>
                             ))}
                         </div>
-
-                        {/* Custom numeric input */}
                         <div className="flex items-center gap-2">
                             <span className="text-xs text-gray-500 flex-shrink-0">
                                 Custom (1–10000):
@@ -337,7 +371,7 @@ export default function AdvancedSettings({
                         </p>
                     </div>
 
-                    {/* ── 4. Solubility filter at generation time ──────────── */}
+                    {/* ── 4. Solubility filter ─────────────────────────────── */}
                     {!analoguesDisabled && (
                         <div>
                             <label className="block text-xs font-medium text-gray-400 mb-1 uppercase tracking-wider">
@@ -363,9 +397,7 @@ export default function AdvancedSettings({
                                     >
                                         <span className="mt-0.5 text-sm flex-shrink-0">{badge}</span>
                                         <div className="flex-1 min-w-0">
-                                            <p className={`text-sm font-medium ${solubilityFilter === value
-                                                    ? "text-emerald-300"
-                                                    : "text-gray-300"
+                                            <p className={`text-sm font-medium ${solubilityFilter === value ? "text-emerald-300" : "text-gray-300"
                                                 }`}>
                                                 {label}
                                             </p>
@@ -436,7 +468,6 @@ export default function AdvancedSettings({
                                             </div>
                                             <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
 
-                                            {/* ADMET — show what flags will include */}
                                             {key === "admet" && pipelineSteps.admet && (
                                                 <div className="mt-2 p-2 rounded-lg bg-gray-900/60 border border-gray-800">
                                                     <p className="text-[10px] text-gray-500 font-medium uppercase tracking-wider mb-1">
@@ -444,11 +475,11 @@ export default function AdvancedSettings({
                                                     </p>
                                                     <div className="space-y-0.5">
                                                         {[
-                                                            { prop: "hERG Inhibition",      thresh: ">0.50",      risk: "cardiac arrhythmia" },
-                                                            { prop: "Hepatotoxicity",        thresh: ">0.50",      risk: "liver toxicity (DILI)" },
-                                                            { prop: "Caco-2 Permeability",   thresh: "<−5.15 log", risk: "poor oral absorption" },
-                                                            { prop: "Oral Bioavailability",  thresh: "<0.30",      risk: "poor systemic exposure" },
-                                                            { prop: "BBB Penetration",       thresh: "<0.30",      risk: "limited CNS exposure (info only)" },
+                                                            { prop: "hERG Inhibition", thresh: ">0.50", risk: "cardiac arrhythmia" },
+                                                            { prop: "Hepatotoxicity", thresh: ">0.50", risk: "liver toxicity (DILI)" },
+                                                            { prop: "Caco-2 Permeability", thresh: "<−5.15 log", risk: "poor oral absorption" },
+                                                            { prop: "Oral Bioavailability", thresh: "<0.30", risk: "poor systemic exposure" },
+                                                            { prop: "BBB Penetration", thresh: "<0.30", risk: "limited CNS exposure (info only)" },
                                                         ].map(({ prop, thresh, risk }) => (
                                                             <div key={prop} className="flex items-center justify-between gap-2">
                                                                 <span className="text-[10px] text-gray-400 truncate">{prop}</span>
@@ -465,10 +496,8 @@ export default function AdvancedSettings({
                                                 </div>
                                             )}
 
-                                            {/* MW range + Lipinski violations — under drug_likeness */}
                                             {key === "drug_likeness" && (
                                                 <div className="mt-3 space-y-3">
-                                                    {/* MW range */}
                                                     <div className="flex items-center gap-2">
                                                         <div className="flex flex-col gap-0.5">
                                                             <label className="text-[10px] text-gray-500">Min MW (Da)</label>
@@ -504,7 +533,6 @@ export default function AdvancedSettings({
                                                         )}
                                                     </div>
 
-                                                    {/* Max Lipinski violations */}
                                                     <div className="flex flex-col gap-1">
                                                         <label className="text-[10px] text-gray-500 uppercase tracking-wider">
                                                             Max Lipinski Violations Allowed
@@ -692,6 +720,103 @@ export default function AdvancedSettings({
                             )}
                         </div>
                     )}
+
+                    {/* ── 8. Scaffold Lock ──────────────────────────────────── */}
+                    <div>
+                        <label className="block text-xs font-medium text-gray-400 mb-1 uppercase tracking-wider">
+                            Scaffold Lock{" "}
+                            <span className="normal-case font-normal text-gray-600">
+                                (optional — prevents core destruction)
+                            </span>
+                        </label>
+                        <p className="text-xs text-gray-500 mb-3">
+                            Any generated analogue that does <strong className="text-gray-400">not</strong> contain
+                            this SMARTS substructure is rejected at generation time. Use this to stop the AI
+                            from destroying the pharmacophoric core — e.g. the quinolone ring in
+                            fluoroquinolones, or the purine hinge in kinase inhibitors.
+                        </p>
+
+                        {/* SMARTS text input */}
+                        <div className="relative mb-3">
+                            <input
+                                type="text"
+                                value={lockedScaffoldSmarts}
+                                onChange={(e) => onLockedScaffoldSmartsChange(e.target.value)}
+                                placeholder="e.g. c1ccc2c(c1)C(=O)c1ccccc1N2  — leave blank to disable"
+                                className={`w-full px-3 py-2 pr-8 rounded-lg bg-gray-800 border text-xs text-white font-mono focus:outline-none placeholder:text-gray-600 transition-colors ${lockedScaffoldSmarts.trim()
+                                        ? "border-amber-700 focus:border-amber-500"
+                                        : "border-gray-700 focus:border-amber-600"
+                                    }`}
+                                spellCheck={false}
+                            />
+                            {lockedScaffoldSmarts && (
+                                <button
+                                    type="button"
+                                    onClick={() => onLockedScaffoldSmartsChange("")}
+                                    className="absolute right-2 top-2 text-gray-600 hover:text-gray-400"
+                                >
+                                    <X className="w-3.5 h-3.5" />
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Quick-pick presets */}
+                        <button
+                            type="button"
+                            onClick={() => setScaffoldPresetOpen(!scaffoldPresetOpen)}
+                            className="text-[11px] text-amber-600 hover:text-amber-400 transition-colors flex items-center gap-1 mb-2"
+                        >
+                            {scaffoldPresetOpen ? "Hide" : "Show"} common scaffold presets
+                            {scaffoldPresetOpen
+                                ? <ChevronUp className="w-3 h-3" />
+                                : <ChevronDown className="w-3 h-3" />
+                            }
+                        </button>
+
+                        {scaffoldPresetOpen && (
+                            <div className="space-y-1.5 mb-3">
+                                {SCAFFOLD_PRESETS.map(({ label, smarts, hint }) => (
+                                    <button
+                                        key={label}
+                                        type="button"
+                                        onClick={() => {
+                                            onLockedScaffoldSmartsChange(smarts);
+                                            setScaffoldPresetOpen(false);
+                                        }}
+                                        className={`w-full flex items-start gap-3 p-2.5 rounded-lg border text-left transition-all ${lockedScaffoldSmarts === smarts
+                                                ? "bg-amber-950/30 border-amber-700"
+                                                : "bg-gray-800/30 border-gray-800 hover:border-gray-700"
+                                            }`}
+                                    >
+                                        <Lock className={`w-3 h-3 mt-0.5 flex-shrink-0 ${lockedScaffoldSmarts === smarts ? "text-amber-400" : "text-gray-600"
+                                            }`} />
+                                        <div className="min-w-0">
+                                            <p className={`text-xs font-medium ${lockedScaffoldSmarts === smarts ? "text-amber-300" : "text-gray-300"
+                                                }`}>
+                                                {label}
+                                            </p>
+                                            <p className="text-[10px] text-gray-500 mt-0.5">{hint}</p>
+                                            <p className="text-[10px] font-mono text-gray-600 mt-0.5 truncate">
+                                                {smarts}
+                                            </p>
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Active confirmation banner */}
+                        {lockedScaffoldSmarts.trim() && (
+                            <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-950/20 border border-amber-900/40">
+                                <Lock className="w-3 h-3 text-amber-400 mt-0.5 flex-shrink-0" />
+                                <p className="text-[11px] text-amber-300/80 leading-relaxed">
+                                    Scaffold lock active — analogues missing this substructure will be
+                                    silently rejected during generation. This reduces yield but preserves
+                                    the pharmacophoric core.
+                                </p>
+                            </div>
+                        )}
+                    </div>
 
                 </div>
             )}

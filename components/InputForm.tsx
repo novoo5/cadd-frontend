@@ -40,13 +40,11 @@ export default function InputForm() {
     const [pdbMetaLoading, setPdbMetaLoading] = useState(false);
 
     // ── Advanced settings state ───────────────────────────────────────────────
-    // ← was: 10 | 25 | 50
     const [numAnalogues, setNumAnalogues] = useState<number>(25);
     const [directScoreOnly, setDirectScoreOnly] = useState(false);
-    // ← NEW
     const [toxicityReportOnly, setToxicityReportOnly] = useState(false);
-    // ← NEW
     const [solubilityFilter, setSolubilityFilter] = useState<SolubilityFilterMode>("all");
+    const [lockedScaffoldSmarts, setLockedScaffoldSmarts] = useState("");  // ← NEW
     const [pipelineSteps, setPipelineSteps] = useState<PipelineSteps>({
         drug_likeness: true,
         admet: true,
@@ -64,7 +62,6 @@ export default function InputForm() {
     });
     const [mwMin, setMwMin] = useState(200);
     const [mwMax, setMwMax] = useState(500);
-    // null = "Ignore completely"
     const [maxLipinskiViolations, setMaxLipinskiViolations] = useState<number | null>(1);
 
     // ── Submission state ──────────────────────────────────────────────────────
@@ -90,8 +87,6 @@ export default function InputForm() {
         }, 600);
     }, [pdbId]);
 
-    // When toxicity-only is toggled on, mutually exclude direct-score mode
-    // (they're different "no-docking" paths — don't let both be true)
     const handleToxicityReportOnlyChange = (v: boolean) => {
         setToxicityReportOnly(v);
         if (v) setDirectScoreOnly(false);
@@ -103,7 +98,6 @@ export default function InputForm() {
     };
 
     // ── Derived flags ─────────────────────────────────────────────────────────
-    // PDB is not required in toxicity-only mode
     const pdbRequired = !toxicityReportOnly;
 
     // ── Submit ────────────────────────────────────────────────────────────────
@@ -116,7 +110,6 @@ export default function InputForm() {
             return;
         }
 
-        // PDB validation only when docking is going to run
         if (pdbRequired) {
             if (pdbMode === "id" && pdbId.trim().length !== 4) {
                 setError("PDB ID must be exactly 4 characters (e.g. 1HSG).");
@@ -139,19 +132,18 @@ export default function InputForm() {
                 mw_min: mwMin,
                 mw_max: mwMax,
                 max_lipinski_violations: maxLipinskiViolations,
-                solubility_filter: solubilityFilter,        // ← NEW
-                toxicity_report_only: toxicityReportOnly,      // ← NEW
+                solubility_filter: solubilityFilter,
+                toxicity_report_only: toxicityReportOnly,
+                locked_scaffold_smarts: lockedScaffoldSmarts.trim() || undefined,  // ← NEW
             };
 
             let response;
 
             if (pdbMode === "file") {
-                // pdbFile is null when toxicity_report_only — submitJobWithFile handles that
                 response = await submitJobWithFile(smiles, pdbFile, sharedOptions);
             } else {
                 response = await submitJob({
                     smiles,
-                    // Only include pdb_id when PDB is needed
                     ...(pdbRequired && pdbId ? { pdb_id: pdbId.toUpperCase() } : {}),
                     ...sharedOptions,
                     binding_site_coords: bindingSiteMode === "coordinates" ? bindingSiteCoords : undefined,
@@ -250,7 +242,6 @@ export default function InputForm() {
             </div>
 
             {/* ── Target Protein ───────────────────────────────────────────── */}
-            {/* Hidden entirely in toxicity-only mode — no PDB needed */}
             {pdbRequired && (
                 <div className="card">
                     <label className="block text-sm font-medium text-gray-300 mb-1">
@@ -261,7 +252,6 @@ export default function InputForm() {
                         Provide the protein structure to dock against.
                     </p>
 
-                    {/* Mode tabs */}
                     <div className="flex gap-1 p-1 bg-gray-800 rounded-lg w-fit mb-4">
                         {(["id", "file"] as const).map((mode) => (
                             <button
@@ -388,6 +378,8 @@ export default function InputForm() {
                 onToxicityReportOnlyChange={handleToxicityReportOnlyChange}
                 solubilityFilter={solubilityFilter}
                 onSolubilityFilterChange={setSolubilityFilter}
+                lockedScaffoldSmarts={lockedScaffoldSmarts}
+                onLockedScaffoldSmartsChange={setLockedScaffoldSmarts}
                 pipelineSteps={pipelineSteps}
                 onPipelineStepsChange={setPipelineSteps}
                 dockingSpeed={dockingSpeed}
