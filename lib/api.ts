@@ -43,7 +43,6 @@ export interface JobRequest {
     smiles: string;
     pdb_id?: string;
     pdb_content?: string;
-    // ← was le=1000, now supports 0–10000
     num_analogues: number;
     direct_score_only?: boolean;
     solubility_filter?: SolubilityFilterMode;
@@ -56,6 +55,7 @@ export interface JobRequest {
     mw_min?: number;
     mw_max?: number;
     max_lipinski_violations?: number | null;
+    locked_scaffold_smarts?: string | null;   // ← NEW
 }
 
 
@@ -73,8 +73,8 @@ export interface PipelineStepInfo {
     status: StepStatus;
     message?: string | null;
     duration_seconds?: number | null;
-    progress_current?: number | null;   // ← NEW: e.g. 47
-    progress_total?: number | null;   // ← NEW: e.g. 100
+    progress_current?: number | null;
+    progress_total?: number | null;
 }
 
 export interface JobStatusResponse {
@@ -236,6 +236,7 @@ export async function submitJobWithFile(
         max_lipinski_violations?: number | null;
         solubility_filter?: SolubilityFilterMode;
         toxicity_report_only?: boolean;
+        locked_scaffold_smarts?: string;   // ← NEW
     }
 ): Promise<JobSubmitResponse> {
     const formData = new FormData();
@@ -258,6 +259,10 @@ export async function submitJobWithFile(
     );
     formData.append("solubility_filter", options.solubility_filter ?? "all");
     formData.append("toxicity_report_only", String(options.toxicity_report_only ?? false));
+    // ← NEW: only append when provided
+    if (options.locked_scaffold_smarts) {
+        formData.append("locked_scaffold_smarts", options.locked_scaffold_smarts);
+    }
 
     const response = await fetch(`${BACKEND_URL}/api/v1/jobs/upload`, {
         method: "POST",
