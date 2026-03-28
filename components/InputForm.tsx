@@ -87,21 +87,17 @@ export default function InputForm() {
         }, 600);
     }, [pdbId]);
 
-    // ── FIX: both flags are now fully independent — no mutual exclusion ───────
-    const handleToxicityReportOnlyChange = (v: boolean) => {
-        setToxicityReportOnly(v);
-    };
-
-    const handleDirectScoreOnlyChange = (v: boolean) => {
-        setDirectScoreOnly(v);
-    };
+    // Both toggles are fully independent — no mutual exclusion
+    const handleToxicityReportOnlyChange = (v: boolean) => setToxicityReportOnly(v);
+    const handleDirectScoreOnlyChange = (v: boolean) => setDirectScoreOnly(v);
 
     // ── Derived flags ─────────────────────────────────────────────────────────
-    // Pure tox-only mode = toxicity on, direct score off → no PDB needed
-    // Both on (both_modes) = full pipeline on single compound → PDB still needed
-    const toxOnly   = toxicityReportOnly && !directScoreOnly;
+    const toxOnly = toxicityReportOnly && !directScoreOnly;
     const bothModes = toxicityReportOnly && directScoreOnly;
-    const pdbRequired = !toxOnly;
+
+    // PDB never required when toxicity_report_only is on —
+    // orchestrator always takes ADMET-only shortcut regardless of direct_score_only
+    const pdbRequired = !toxicityReportOnly;
 
     // ── Submit ────────────────────────────────────────────────────────────────
     const handleSubmit = async (e: React.FormEvent) => {
@@ -179,7 +175,7 @@ export default function InputForm() {
                 </div>
             )}
 
-            {/* ── Tox-only banner (pure tox mode — no docking) ─────────────── */}
+            {/* ── Pure tox-only banner ─────────────────────────────────────── */}
             {toxOnly && (
                 <div className="flex items-start gap-3 p-4 rounded-xl bg-red-950/20 border border-red-800/40 animate-slide-up">
                     <TestTube className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
@@ -187,13 +183,14 @@ export default function InputForm() {
                         <p className="text-red-300 font-medium">Toxicity Report mode active</p>
                         <p className="text-red-700 mt-0.5">
                             Only ADMET toxicity analysis will run. Docking and retrosynthesis
-                            are skipped. No protein structure required.
+                            are skipped. No protein structure required. Full report shown even
+                            if the compound fails ADMET.
                         </p>
                     </div>
                 </div>
             )}
 
-            {/* ── Both-modes banner (full pipeline + ADMET guaranteed) ─────── */}
+            {/* ── Direct score + tox banner ────────────────────────────────── */}
             {bothModes && (
                 <div className="flex items-start gap-3 p-4 rounded-xl bg-violet-950/20 border border-violet-800/40 animate-slide-up">
                     <Zap className="w-4 h-4 text-violet-400 mt-0.5 flex-shrink-0" />
@@ -202,8 +199,9 @@ export default function InputForm() {
                             Direct Score + Toxicity Report
                         </p>
                         <p className="text-violet-700 mt-0.5">
-                            Full pipeline runs on your base compound only (no analogues generated).
-                            ADMET is guaranteed on. Protein structure required for docking.
+                            ADMET analysis on your base compound only — no analogues generated,
+                            no docking, no PDB required. Full toxicity profile is always written,
+                            even if the compound fails ADMET.
                         </p>
                     </div>
                 </div>
@@ -217,7 +215,7 @@ export default function InputForm() {
                 </label>
                 <p className="text-xs text-gray-500 mb-3">
                     {bothModes
-                        ? "This exact compound will be scored through the full pipeline with ADMET guaranteed (no analogues generated)."
+                        ? "This exact compound will be screened for ADMET toxicity (no analogues, no docking)."
                         : directScoreOnly
                             ? "This exact compound will be scored through the full pipeline (no analogues generated)."
                             : toxOnly
@@ -262,7 +260,7 @@ export default function InputForm() {
                 </div>
             </div>
 
-            {/* ── Target Protein ───────────────────────────────────────────── */}
+            {/* ── Target Protein — hidden whenever toxicity_report_only is on ─ */}
             {pdbRequired && (
                 <div className="card">
                     <label className="block text-sm font-medium text-gray-300 mb-1">
@@ -436,7 +434,7 @@ export default function InputForm() {
                 {submitting ? (
                     <><Loader2 className="w-5 h-5 animate-spin" /> Submitting pipeline job...</>
                 ) : bothModes ? (
-                    <><Zap className="w-5 h-5" /> Direct Score + Toxicity Report</>
+                    <><Zap className="w-5 h-5" /> Run Toxicity Report (Single Compound)</>
                 ) : toxOnly ? (
                     <><TestTube className="w-5 h-5" /> Run Toxicity Report</>
                 ) : directScoreOnly ? (
@@ -448,7 +446,7 @@ export default function InputForm() {
 
             <p className="text-xs text-gray-600 text-center">
                 {bothModes
-                    ? "Full pipeline on base compound — ADMET guaranteed. Results in 5–15 minutes."
+                    ? "ADMET toxicity report on base compound only — no PDB needed, ~2–5 minutes."
                     : toxOnly
                         ? "Toxicity report only — ADMET screening completes in ~2–5 minutes."
                         : directScoreOnly
