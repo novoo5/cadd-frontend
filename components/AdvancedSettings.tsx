@@ -53,8 +53,8 @@ interface AdvancedSettingsProps {
     toxicityReportOnly: boolean;
     onToxicityReportOnlyChange: (v: boolean) => void;
 
-    lockedScaffoldSmarts: string;              // ← NEW
-    onLockedScaffoldSmartsChange: (v: string) => void; // ← NEW
+    lockedScaffoldSmarts: string;
+    onLockedScaffoldSmartsChange: (v: string) => void;
 }
 
 
@@ -195,7 +195,11 @@ export default function AdvancedSettings({
     onLockedScaffoldSmartsChange,
 }: AdvancedSettingsProps) {
     const [open, setOpen] = useState(false);
-    const [scaffoldPresetOpen, setScaffoldPresetOpen] = useState(false);  // ← NEW
+    const [scaffoldPresetOpen, setScaffoldPresetOpen] = useState(false);
+
+    // FIX: derive these once so all UI logic uses consistent definitions
+    const toxOnly = toxicityReportOnly && !directScoreOnly;
+    const bothModes = toxicityReportOnly && directScoreOnly;
 
     const toggleStep = (key: keyof PipelineSteps) => {
         if (key === "drug_likeness") return;
@@ -229,10 +233,9 @@ export default function AdvancedSettings({
                     )}
                     {toxicityReportOnly && (
                         <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-900/50 border border-red-700 text-red-300">
-                            <FlaskConical className="w-2.5 h-2.5" /> Toxicity Only
+                            <FlaskConical className="w-2.5 h-2.5" /> {bothModes ? "Tox + Direct" : "Toxicity Only"}
                         </span>
                     )}
-                    {/* ← NEW: amber badge when scaffold lock is active */}
                     {lockedScaffoldSmarts.trim() && (
                         <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-900/50 border border-amber-700 text-amber-300">
                             <Lock className="w-2.5 h-2.5" /> Scaffold Lock
@@ -250,8 +253,8 @@ export default function AdvancedSettings({
 
                     {/* ── 1. Toxicity Report Only ──────────────────────────── */}
                     <div className={`p-3 rounded-xl border transition-all ${toxicityReportOnly
-                            ? "bg-red-950/30 border-red-700"
-                            : "bg-gray-800/30 border-gray-800"
+                        ? "bg-red-950/30 border-red-700"
+                        : "bg-gray-800/30 border-gray-800"
                         }`}>
                         <div className="flex items-center justify-between gap-3">
                             <div className="flex items-start gap-2">
@@ -259,13 +262,13 @@ export default function AdvancedSettings({
                                     }`} />
                                 <div>
                                     <p className="text-sm font-medium text-gray-200">
-                                        Toxicity Report Only
+                                        Toxicity Report
                                     </p>
                                     <p className="text-xs text-gray-500 mt-0.5">
-                                        Skip docking and retrosynthesis entirely. Run only ADMET
-                                        toxicity analysis on your compound (and analogues if requested).
-                                        No PDB file required — ideal for rapid tox profiling before
-                                        committing to a full docking run.
+                                        Forces ADMET on regardless of other settings.
+                                        When used alone: skips docking/retrosynthesis, no PDB needed.
+                                        When combined with Direct Score: runs the full pipeline on your
+                                        compound with ADMET guaranteed — PDB still required.
                                     </p>
                                 </div>
                             </div>
@@ -283,8 +286,8 @@ export default function AdvancedSettings({
 
                     {/* ── 2. Direct Score Mode ─────────────────────────────── */}
                     <div className={`p-3 rounded-xl border transition-all ${directScoreOnly
-                            ? "bg-violet-950/30 border-violet-700"
-                            : "bg-gray-800/30 border-gray-800"
+                        ? "bg-violet-950/30 border-violet-700"
+                        : "bg-gray-800/30 border-gray-800"
                         }`}>
                         <div className="flex items-center justify-between gap-3">
                             <div className="flex items-start gap-2">
@@ -296,7 +299,8 @@ export default function AdvancedSettings({
                                     </p>
                                     <p className="text-xs text-gray-500 mt-0.5">
                                         Skip analogue generation — score your input SMILES directly
-                                        through the full pipeline. Ideal for benchmarking known compounds.
+                                        through the full pipeline. Combine with Toxicity Report to
+                                        guarantee ADMET runs. Ideal for benchmarking known compounds.
                                     </p>
                                 </div>
                             </div>
@@ -329,8 +333,8 @@ export default function AdvancedSettings({
                                     type="button"
                                     onClick={() => onNumAnaloguesChange(n)}
                                     className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-all ${numAnalogues === n
-                                            ? "bg-emerald-900/50 border-emerald-600 text-emerald-300"
-                                            : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
+                                        ? "bg-emerald-900/50 border-emerald-600 text-emerald-300"
+                                        : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
                                         }`}
                                 >
                                     {n}
@@ -391,8 +395,8 @@ export default function AdvancedSettings({
                                         type="button"
                                         onClick={() => onSolubilityFilterChange(value)}
                                         className={`w-full flex items-start gap-3 p-3 rounded-lg border text-left transition-all ${solubilityFilter === value
-                                                ? "bg-emerald-950/30 border-emerald-700"
-                                                : "bg-gray-800/30 border-gray-800 hover:border-gray-700"
+                                            ? "bg-emerald-950/30 border-emerald-700"
+                                            : "bg-gray-800/30 border-gray-800 hover:border-gray-700"
                                             }`}
                                     >
                                         <span className="mt-0.5 text-sm flex-shrink-0">{badge}</span>
@@ -419,36 +423,41 @@ export default function AdvancedSettings({
                         </label>
                         <div className="space-y-2">
                             {STEPS.map(({ key, label, desc, locked }) => {
+                                // FIX: only force-skip in pure tox-only mode
+                                // In both_modes, full pipeline runs so nothing should be grayed
                                 const forceSkipped =
-                                    toxicityReportOnly &&
+                                    toxOnly &&
                                     key !== "admet" &&
                                     key !== "drug_likeness";
+
+                                // ADMET is always forced on when toxicityReportOnly is set
+                                const forcedOn = toxicityReportOnly && key === "admet";
 
                                 return (
                                     <div
                                         key={key}
                                         className={`flex items-start gap-3 p-3 rounded-lg border transition-all ${forceSkipped
-                                                ? "opacity-40 bg-gray-900/20 border-gray-800"
-                                                : pipelineSteps[key]
-                                                    ? "bg-emerald-950/30 border-emerald-900"
-                                                    : "bg-gray-800/30 border-gray-800"
+                                            ? "opacity-40 bg-gray-900/20 border-gray-800"
+                                            : pipelineSteps[key]
+                                                ? "bg-emerald-950/30 border-emerald-900"
+                                                : "bg-gray-800/30 border-gray-800"
                                             }`}
                                     >
                                         <button
                                             type="button"
                                             onClick={() => toggleStep(key)}
-                                            disabled={locked || forceSkipped}
+                                            disabled={locked || forceSkipped || forcedOn}
                                             className={`mt-0.5 w-9 h-5 rounded-full relative transition-colors flex-shrink-0 ${pipelineSteps[key] && !forceSkipped
-                                                    ? "bg-emerald-600"
-                                                    : "bg-gray-700"
-                                                } ${locked || forceSkipped
+                                                ? "bg-emerald-600"
+                                                : "bg-gray-700"
+                                                } ${locked || forceSkipped || forcedOn
                                                     ? "opacity-50 cursor-not-allowed"
                                                     : "cursor-pointer"
                                                 }`}
                                         >
                                             <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${pipelineSteps[key] && !forceSkipped
-                                                    ? "translate-x-[1.125rem]"
-                                                    : "translate-x-0"
+                                                ? "translate-x-[1.125rem]"
+                                                : "translate-x-0"
                                                 }`} />
                                         </button>
 
@@ -458,6 +467,11 @@ export default function AdvancedSettings({
                                                 {locked && (
                                                     <span className="badge-neutral text-[10px]">
                                                         always on
+                                                    </span>
+                                                )}
+                                                {forcedOn && (
+                                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-900/40 border border-red-800 text-red-400">
+                                                        forced on — toxicity report
                                                     </span>
                                                 )}
                                                 {forceSkipped && (
@@ -567,7 +581,8 @@ export default function AdvancedSettings({
                     </div>
 
                     {/* ── 6. Docking speed ─────────────────────────────────── */}
-                    {pipelineSteps.docking && !toxicityReportOnly && (
+                    {/* FIX: show when docking is on AND not pure tox-only mode */}
+                    {pipelineSteps.docking && !toxOnly && (
                         <div>
                             <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
                                 Docking Speed
@@ -579,8 +594,8 @@ export default function AdvancedSettings({
                                         type="button"
                                         onClick={() => onDockingSpeedChange(value)}
                                         className={`w-full flex items-center justify-between p-3 rounded-lg border text-left transition-all ${dockingSpeed === value
-                                                ? "bg-emerald-950/30 border-emerald-700 text-emerald-300"
-                                                : "bg-gray-800/30 border-gray-800 text-gray-400 hover:border-gray-700"
+                                            ? "bg-emerald-950/30 border-emerald-700 text-emerald-300"
+                                            : "bg-gray-800/30 border-gray-800 text-gray-400 hover:border-gray-700"
                                             }`}
                                     >
                                         <span className="text-sm font-medium">{label}</span>
@@ -592,7 +607,8 @@ export default function AdvancedSettings({
                     )}
 
                     {/* ── 7. Binding site ───────────────────────────────────── */}
-                    {pipelineSteps.docking && !toxicityReportOnly && (
+                    {/* FIX: show when docking is on AND not pure tox-only mode */}
+                    {pipelineSteps.docking && !toxOnly && (
                         <div>
                             <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
                                 Binding Site Definition
@@ -604,8 +620,8 @@ export default function AdvancedSettings({
                                         type="button"
                                         onClick={() => onBindingSiteModeChange(mode)}
                                         className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all capitalize ${bindingSiteMode === mode
-                                                ? "bg-emerald-900/50 border-emerald-600 text-emerald-300"
-                                                : "bg-gray-800 border-gray-700 text-gray-500 hover:border-gray-600"
+                                            ? "bg-emerald-900/50 border-emerald-600 text-emerald-300"
+                                            : "bg-gray-800 border-gray-700 text-gray-500 hover:border-gray-600"
                                             }`}
                                     >
                                         {mode}
@@ -736,7 +752,6 @@ export default function AdvancedSettings({
                             fluoroquinolones, or the purine hinge in kinase inhibitors.
                         </p>
 
-                        {/* SMARTS text input */}
                         <div className="relative mb-3">
                             <input
                                 type="text"
@@ -744,8 +759,8 @@ export default function AdvancedSettings({
                                 onChange={(e) => onLockedScaffoldSmartsChange(e.target.value)}
                                 placeholder="e.g. c1ccc2c(c1)C(=O)c1ccccc1N2  — leave blank to disable"
                                 className={`w-full px-3 py-2 pr-8 rounded-lg bg-gray-800 border text-xs text-white font-mono focus:outline-none placeholder:text-gray-600 transition-colors ${lockedScaffoldSmarts.trim()
-                                        ? "border-amber-700 focus:border-amber-500"
-                                        : "border-gray-700 focus:border-amber-600"
+                                    ? "border-amber-700 focus:border-amber-500"
+                                    : "border-gray-700 focus:border-amber-600"
                                     }`}
                                 spellCheck={false}
                             />
@@ -760,7 +775,6 @@ export default function AdvancedSettings({
                             )}
                         </div>
 
-                        {/* Quick-pick presets */}
                         <button
                             type="button"
                             onClick={() => setScaffoldPresetOpen(!scaffoldPresetOpen)}
@@ -784,8 +798,8 @@ export default function AdvancedSettings({
                                             setScaffoldPresetOpen(false);
                                         }}
                                         className={`w-full flex items-start gap-3 p-2.5 rounded-lg border text-left transition-all ${lockedScaffoldSmarts === smarts
-                                                ? "bg-amber-950/30 border-amber-700"
-                                                : "bg-gray-800/30 border-gray-800 hover:border-gray-700"
+                                            ? "bg-amber-950/30 border-amber-700"
+                                            : "bg-gray-800/30 border-gray-800 hover:border-gray-700"
                                             }`}
                                     >
                                         <Lock className={`w-3 h-3 mt-0.5 flex-shrink-0 ${lockedScaffoldSmarts === smarts ? "text-amber-400" : "text-gray-600"
@@ -805,7 +819,6 @@ export default function AdvancedSettings({
                             </div>
                         )}
 
-                        {/* Active confirmation banner */}
                         {lockedScaffoldSmarts.trim() && (
                             <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-950/20 border border-amber-900/40">
                                 <Lock className="w-3 h-3 text-amber-400 mt-0.5 flex-shrink-0" />

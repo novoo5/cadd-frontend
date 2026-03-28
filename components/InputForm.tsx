@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
     Upload, FlaskConical, Loader2, AlertCircle,
-    CheckCircle2, ExternalLink, X, TestTube,
+    CheckCircle2, ExternalLink, X, TestTube, Zap,
 } from "lucide-react";
 import AdvancedSettings from "./AdvancedSettings";
 import {
@@ -44,7 +44,7 @@ export default function InputForm() {
     const [directScoreOnly, setDirectScoreOnly] = useState(false);
     const [toxicityReportOnly, setToxicityReportOnly] = useState(false);
     const [solubilityFilter, setSolubilityFilter] = useState<SolubilityFilterMode>("all");
-    const [lockedScaffoldSmarts, setLockedScaffoldSmarts] = useState("");  // ← NEW
+    const [lockedScaffoldSmarts, setLockedScaffoldSmarts] = useState("");
     const [pipelineSteps, setPipelineSteps] = useState<PipelineSteps>({
         drug_likeness: true,
         admet: true,
@@ -87,18 +87,21 @@ export default function InputForm() {
         }, 600);
     }, [pdbId]);
 
+    // ── FIX: both flags are now fully independent — no mutual exclusion ───────
     const handleToxicityReportOnlyChange = (v: boolean) => {
         setToxicityReportOnly(v);
-        if (v) setDirectScoreOnly(false);
     };
 
     const handleDirectScoreOnlyChange = (v: boolean) => {
         setDirectScoreOnly(v);
-        if (v) setToxicityReportOnly(false);
     };
 
     // ── Derived flags ─────────────────────────────────────────────────────────
-    const pdbRequired = !toxicityReportOnly;
+    // Pure tox-only mode = toxicity on, direct score off → no PDB needed
+    // Both on (both_modes) = full pipeline on single compound → PDB still needed
+    const toxOnly   = toxicityReportOnly && !directScoreOnly;
+    const bothModes = toxicityReportOnly && directScoreOnly;
+    const pdbRequired = !toxOnly;
 
     // ── Submit ────────────────────────────────────────────────────────────────
     const handleSubmit = async (e: React.FormEvent) => {
@@ -134,7 +137,7 @@ export default function InputForm() {
                 max_lipinski_violations: maxLipinskiViolations,
                 solubility_filter: solubilityFilter,
                 toxicity_report_only: toxicityReportOnly,
-                locked_scaffold_smarts: lockedScaffoldSmarts.trim() || undefined,  // ← NEW
+                locked_scaffold_smarts: lockedScaffoldSmarts.trim() || undefined,
             };
 
             let response;
@@ -176,8 +179,8 @@ export default function InputForm() {
                 </div>
             )}
 
-            {/* ── Toxicity-only info banner ────────────────────────────────── */}
-            {toxicityReportOnly && (
+            {/* ── Tox-only banner (pure tox mode — no docking) ─────────────── */}
+            {toxOnly && (
                 <div className="flex items-start gap-3 p-4 rounded-xl bg-red-950/20 border border-red-800/40 animate-slide-up">
                     <TestTube className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
                     <div className="text-sm">
@@ -190,6 +193,22 @@ export default function InputForm() {
                 </div>
             )}
 
+            {/* ── Both-modes banner (full pipeline + ADMET guaranteed) ─────── */}
+            {bothModes && (
+                <div className="flex items-start gap-3 p-4 rounded-xl bg-violet-950/20 border border-violet-800/40 animate-slide-up">
+                    <Zap className="w-4 h-4 text-violet-400 mt-0.5 flex-shrink-0" />
+                    <div className="text-sm">
+                        <p className="text-violet-300 font-medium">
+                            Direct Score + Toxicity Report
+                        </p>
+                        <p className="text-violet-700 mt-0.5">
+                            Full pipeline runs on your base compound only (no analogues generated).
+                            ADMET is guaranteed on. Protein structure required for docking.
+                        </p>
+                    </div>
+                </div>
+            )}
+
             {/* ── SMILES input ─────────────────────────────────────────────── */}
             <div className="card">
                 <label className="block text-sm font-medium text-gray-300 mb-1">
@@ -197,11 +216,13 @@ export default function InputForm() {
                     <span className="ml-2 text-xs text-gray-500 font-normal">required</span>
                 </label>
                 <p className="text-xs text-gray-500 mb-3">
-                    {directScoreOnly
-                        ? "This exact compound will be scored through the full pipeline (no analogues generated)."
-                        : toxicityReportOnly
-                            ? "This compound (and any analogues you request) will be screened for ADMET toxicity."
-                            : "Enter the SMILES string of your base compound. Analogues will be generated from this scaffold."
+                    {bothModes
+                        ? "This exact compound will be scored through the full pipeline with ADMET guaranteed (no analogues generated)."
+                        : directScoreOnly
+                            ? "This exact compound will be scored through the full pipeline (no analogues generated)."
+                            : toxOnly
+                                ? "This compound (and any analogues you request) will be screened for ADMET toxicity."
+                                : "Enter the SMILES string of your base compound. Analogues will be generated from this scaffold."
                     }
                 </p>
                 <div className="relative">
@@ -414,7 +435,9 @@ export default function InputForm() {
             >
                 {submitting ? (
                     <><Loader2 className="w-5 h-5 animate-spin" /> Submitting pipeline job...</>
-                ) : toxicityReportOnly ? (
+                ) : bothModes ? (
+                    <><Zap className="w-5 h-5" /> Direct Score + Toxicity Report</>
+                ) : toxOnly ? (
                     <><TestTube className="w-5 h-5" /> Run Toxicity Report</>
                 ) : directScoreOnly ? (
                     <><FlaskConical className="w-5 h-5" /> Score This Compound Directly</>
@@ -424,13 +447,15 @@ export default function InputForm() {
             </button>
 
             <p className="text-xs text-gray-600 text-center">
-                {toxicityReportOnly
-                    ? "Toxicity report only — ADMET screening completes in ~2–5 minutes."
-                    : directScoreOnly
-                        ? "Direct scoring skips analogue generation — results in 5–15 minutes."
-                        : numAnalogues >= 500
-                            ? `${numAnalogues} analogues requested — pipeline may take 60–90 minutes.`
-                            : "Pipeline takes 30–60 minutes depending on settings. You'll get a tracking URL immediately."
+                {bothModes
+                    ? "Full pipeline on base compound — ADMET guaranteed. Results in 5–15 minutes."
+                    : toxOnly
+                        ? "Toxicity report only — ADMET screening completes in ~2–5 minutes."
+                        : directScoreOnly
+                            ? "Direct scoring skips analogue generation — results in 5–15 minutes."
+                            : numAnalogues >= 500
+                                ? `${numAnalogues} analogues requested — pipeline may take 60–90 minutes.`
+                                : "Pipeline takes 30–60 minutes depending on settings. You'll get a tracking URL immediately."
                 }
             </p>
 
