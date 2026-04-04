@@ -2,15 +2,19 @@
 
 import { useState } from "react";
 import { Download, ArrowUpDown, Trophy, BookOpen, X } from "lucide-react";
-import type { JobResultsResponse, CompoundResult } from "@/lib/api";
+import type { JobResultsResponse, CompoundResult, ADMETFlagDetail } from "@/lib/api";
 import { getScoreColor, getAffinityColor } from "@/lib/api";
 import MoleculeCard from "./MoleculeCard";
+
 
 interface ResultsTableProps {
     results: JobResultsResponse;
 }
 
 type SortKey = "rank" | "docking" | "admet" | "score";
+
+
+// ── Scoring guide (unchanged) ─────────────────────────────────────────────────
 
 const SCORING_GUIDE = [
     {
@@ -73,7 +77,7 @@ const SCORING_GUIDE = [
     },
     {
         metric: "Oral Bioavailability",
-        description: "What percentage of the drug actually reaches the bloodstream after swallowing a pill. The rest is broken down before absorption.",
+        description: "What percentage of the drug actually reaches the bloodstream after swallowing a pill.",
         ranges: [
             { range: "> 70%", label: "Excellent", color: "text-emerald-400", note: "Most drug reaches target" },
             { range: "30–70%", label: "Moderate", color: "text-yellow-400", note: "Acceptable for most drugs" },
@@ -82,7 +86,7 @@ const SCORING_GUIDE = [
     },
     {
         metric: "Caco-2 Permeability",
-        description: "Measures how well the drug can pass through intestinal wall cells (modelled using human colon cells). A key predictor of whether a drug can be taken orally.",
+        description: "Measures how well the drug can pass through intestinal wall cells. A key predictor of oral absorption.",
         ranges: [
             { range: "> −5.15", label: "High Permeability", color: "text-emerald-400", note: "Crosses gut wall easily" },
             { range: "< −5.15", label: "Low Permeability", color: "text-red-400", note: "Poorly absorbed from gut" },
@@ -90,13 +94,136 @@ const SCORING_GUIDE = [
     },
 ];
 
+
+// ── CSV helpers ───────────────────────────────────────────────────────────────
+
+function cell(v: string | number | boolean | null | undefined, dp?: number): string {
+    if (v == null) return "";
+    if (typeof v === "boolean") return v ? "true" : "false";
+    if (typeof v === "number") return dp != null ? v.toFixed(dp) : String(v);
+    // escape for CSV: wrap in quotes if value contains comma / quote / pipe / newline
+    const s = String(v);
+    return /[",|\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function flagSeverity(flags: ADMETFlagDetail[], propName: string): string {
+    return flags.find((f) => f.property_name === propName)?.severity ?? "none";
+}
+
+function buildCSV(results: JobResultsResponse): string {
+    // ── Headers ───────────────────────────────────────────────────────────────
+    const headers = [
+        // identity
+        "rank", "smiles", "canonical_smiles", "final_score",
+
+        // drug-likeness
+        "lipinski_passed", "mw_da", "logp", "hbd", "hba", "logs", "solubility_class",
+
+        // ADMET — raw values
+        "admet_passed",
+        "herg_inhibition", "herg_severity",
+        "caco2_permeability", "caco2_severity",
+        "bbb_penetration", "bbb_severity",
+        "hepatotoxicity", "hepatotox_severity",
+        "oral_bioavailability", "oral_bioavail_severity",
+
+        // ADMET — flag detail (pipe-separated multi-value cells)
+        "admet_total_flags", "admet_high_severity_flags",
+        "admet_flag_names",
+        "admet_flag_implications",
+        "admet_recommendations",
+
+        // ML pre-filter
+        "prefilter_passed", "prefilter_affinity_kcal", "prefilter_confidence",
+
+        // docking
+        "docking_passed", "docking_best_affinity_kcal", "docking_cnn_score",
+        "pose1_affinity", "pose1_rmsd_lb", "pose1_rmsd_ub",
+        "pose2_affinity", "pose2_rmsd_lb", "pose2_rmsd_ub",
+        "pose3_affinity", "pose3_rmsd_lb", "pose3_rmsd_ub",
+
+        // retrosynthesis
+        "retro_feasible", "retro_num_steps", "retro_complexity_score",
+        "retro_step1_smarts", "retro_step1_confidence",
+        "retro_step2_smarts", "retro_step2_confidence",
+        "retro_step3_smarts", "retro_step3_confidence",
+        "retro_all_starting_materials",
+    ];
+
+    const rows = results.final_ranked_compounds.map((c: CompoundResult) => {
+        const lip = c.lipinski;
+        const adm = c.admet;
+        const pre = c.binding_prefilter;
+        const dock = c.docking;
+        const ret = c.retrosynthesis;
+
+        const flags = adm?.flags ?? [];
+        const highFlags = flags.filter((f) => f.severity === "high");
+        const poses = dock?.poses ?? [];
+        const steps = ret?.route ?? [];
+
+        const poseCol = (i: number, key: "affinity_kcal" | "rmsd_lb" | "rmsd_ub") =>
+            cell(poses[i]?.[key], 3);
+        const stepCol = (i: number, key: "reaction_smarts" | "confidence") =>
+            cell(steps[i]?.[key], key === "confidence" ? 3 : undefined);
+
+        const allStartingMats = steps
+            .flatMap((s) => s.starting_materials)
+            .join(" | ");
+
+        return [
+            // identity
+            cell(c.rank), cell(c.smiles), cell(c.canonical_smiles), cell(c.final_score, 4),
+
+            // drug-likeness
+            cell(lip?.passed), cell(lip?.mw, 2), cell(lip?.logp, 3),
+            cell(lip?.hbd), cell(lip?.hba), cell(lip?.logs, 3), cell(lip?.solubility_class),
+
+            // ADMET raw
+            cell(adm?.passed),
+            cell(adm?.herg_inhibition, 4), flagSeverity(flags, "hERG Inhibition"),
+            cell(adm?.caco2_permeability, 4), flagSeverity(flags, "Caco-2 Permeability"),
+            cell(adm?.bbb_penetration, 4), flagSeverity(flags, "BBB Penetration"),
+            cell(adm?.hepatotoxicity, 4), flagSeverity(flags, "Hepatotoxicity"),
+            cell(adm?.oral_bioavailability, 4), flagSeverity(flags, "Oral Bioavailability"),
+
+            // ADMET flags
+            cell(flags.length), cell(highFlags.length),
+            `"${flags.map((f) => f.property_name).join(" | ")}"`,
+            `"${flags.map((f) => f.implication).join(" | ")}"`,
+            `"${flags.map((f) => f.recommendation).join(" | ")}"`,
+
+            // pre-filter
+            cell(pre?.passed), cell(pre?.predicted_affinity_kcal, 3), cell(pre?.confidence, 3),
+
+            // docking
+            cell(dock?.passed), cell(dock?.best_affinity_kcal, 3), cell(dock?.cnn_score, 4),
+            poseCol(0, "affinity_kcal"), poseCol(0, "rmsd_lb"), poseCol(0, "rmsd_ub"),
+            poseCol(1, "affinity_kcal"), poseCol(1, "rmsd_lb"), poseCol(1, "rmsd_ub"),
+            poseCol(2, "affinity_kcal"), poseCol(2, "rmsd_lb"), poseCol(2, "rmsd_ub"),
+
+            // retrosynthesis
+            cell(ret?.feasible), cell(ret?.num_steps), cell(ret?.complexity_score, 3),
+            stepCol(0, "reaction_smarts"), stepCol(0, "confidence"),
+            stepCol(1, "reaction_smarts"), stepCol(1, "confidence"),
+            stepCol(2, "reaction_smarts"), stepCol(2, "confidence"),
+            `"${allStartingMats}"`,
+        ].join(",");
+    });
+
+    return [headers.join(","), ...rows].join("\n");
+}
+
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export default function ResultsTable({ results }: ResultsTableProps) {
     const [sortKey, setSortKey] = useState<SortKey>("rank");
     const [sortAsc, setSortAsc] = useState(true);
     const [guideOpen, setGuideOpen] = useState(false);
 
     const handleSort = (key: SortKey) => {
-        if (sortKey === key) { setSortAsc(!sortAsc); }
+        if (sortKey === key) setSortAsc(!sortAsc);
         else { setSortKey(key); setSortAsc(true); }
     };
 
@@ -110,28 +237,8 @@ export default function ResultsTable({ results }: ResultsTableProps) {
     });
 
     const downloadCsv = () => {
-        // ✅ CNN Score column removed
-        const headers = [
-            "Rank", "SMILES", "Final Score", "MW", "LogP", "Solubility Class",
-            "ADMET Flags", "hERG", "Hepatotox", "Docking (kcal/mol)", "Synthesis Steps", "Complexity"
-        ];
-        const rows = results.final_ranked_compounds.map((c) => [
-            c.rank ?? "",
-            c.canonical_smiles,
-            c.final_score?.toFixed(2) ?? "",
-            c.lipinski?.mw.toFixed(1) ?? "",
-            c.lipinski?.logp.toFixed(2) ?? "",
-            c.lipinski?.solubility_class ?? "",
-            c.admet?.flags.join("; ") ?? "",
-            c.admet?.herg_inhibition.toFixed(3) ?? "",
-            c.admet?.hepatotoxicity.toFixed(3) ?? "",
-            c.docking?.best_affinity_kcal.toFixed(3) ?? "",
-            // ✅ cnn_score row removed
-            c.retrosynthesis?.num_steps ?? "",
-            c.retrosynthesis?.complexity_score.toFixed(1) ?? "",
-        ]);
-        const csv = [headers, ...rows].map((r) => r.map((v) => `"${v}"`).join(",")).join("\n");
-        const blob = new Blob([csv], { type: "text/csv" });
+        const csv = buildCSV(results);
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -143,7 +250,8 @@ export default function ResultsTable({ results }: ResultsTableProps) {
     const SortButton = ({ label, k }: { label: string; k: SortKey }) => (
         <button
             onClick={() => handleSort(k)}
-            className={`flex items-center gap-1 text-xs uppercase tracking-wider transition-colors ${sortKey === k ? "text-emerald-400" : "text-gray-500 hover:text-gray-300"}`}
+            className={`flex items-center gap-1 text-xs uppercase tracking-wider transition-colors ${sortKey === k ? "text-emerald-400" : "text-gray-500 hover:text-gray-300"
+                }`}
         >
             {label}
             <ArrowUpDown className="w-3 h-3" />
@@ -211,7 +319,11 @@ export default function ResultsTable({ results }: ResultsTableProps) {
                         <BookOpen className="w-3.5 h-3.5" />
                         Scoring Guide
                     </button>
-                    <button onClick={downloadCsv} className="btn-secondary text-xs py-1.5 px-3">
+                    <button
+                        onClick={downloadCsv}
+                        className="btn-secondary text-xs py-1.5 px-3"
+                        title="Exports all pipeline data: ADMET values + severities, docking poses, retrosynthesis routes, flag implications and redesign recommendations"
+                    >
                         <Download className="w-3.5 h-3.5" />
                         Export CSV
                     </button>
@@ -234,7 +346,6 @@ export default function ResultsTable({ results }: ResultsTableProps) {
             {guideOpen && (
                 <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 backdrop-blur-sm p-4 overflow-y-auto">
                     <div className="relative w-full max-w-2xl bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl my-8">
-                        {/* Header */}
                         <div className="flex items-center justify-between p-5 border-b border-gray-800">
                             <div className="flex items-center gap-2">
                                 <BookOpen className="w-4 h-4 text-emerald-400" />
@@ -248,14 +359,13 @@ export default function ResultsTable({ results }: ResultsTableProps) {
                             </button>
                         </div>
 
-                        {/* Intro */}
                         <div className="px-5 pt-4 pb-2">
                             <p className="text-xs text-gray-500 leading-relaxed">
-                                This pipeline evaluates drug candidates across multiple dimensions. Below is a plain-English explanation of every metric and what the values mean for drug viability.
+                                This pipeline evaluates drug candidates across multiple dimensions. Below is a plain-English
+                                explanation of every metric and what the values mean for drug viability.
                             </p>
                         </div>
 
-                        {/* Metrics */}
                         <div className="px-5 pb-5 space-y-5">
                             {SCORING_GUIDE.map((item) => (
                                 <div key={item.metric} className="p-4 rounded-xl bg-gray-800/50 border border-gray-700/50">
