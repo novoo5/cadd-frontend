@@ -12,6 +12,9 @@ export type StepStatus = "waiting" | "running" | "done" | "skipped" | "failed";
 export type JobStatus = "queued" | "running" | "done" | "failed";
 export type SolubilityFilterMode = "soluble_only" | "allow_slightly" | "all";
 
+// Download file types produced by the docking pipeline
+export type DockingFileType = "pdbqt" | "pose_pdb" | "complex_pdb";
+
 
 // ── Pipeline config types ─────────────────────────────────────────────────────
 
@@ -55,7 +58,7 @@ export interface JobRequest {
     mw_min?: number;
     mw_max?: number;
     max_lipinski_violations?: number | null;
-    locked_scaffold_smarts?: string | null;   // ← NEW
+    locked_scaffold_smarts?: string | null;
 }
 
 
@@ -236,7 +239,7 @@ export async function submitJobWithFile(
         max_lipinski_violations?: number | null;
         solubility_filter?: SolubilityFilterMode;
         toxicity_report_only?: boolean;
-        locked_scaffold_smarts?: string;   // ← NEW
+        locked_scaffold_smarts?: string;
     }
 ): Promise<JobSubmitResponse> {
     const formData = new FormData();
@@ -259,7 +262,6 @@ export async function submitJobWithFile(
     );
     formData.append("solubility_filter", options.solubility_filter ?? "all");
     formData.append("toxicity_report_only", String(options.toxicity_report_only ?? false));
-    // ← NEW: only append when provided
     if (options.locked_scaffold_smarts) {
         formData.append("locked_scaffold_smarts", options.locked_scaffold_smarts);
     }
@@ -356,6 +358,62 @@ export async function fetchPdbMetadata(
     } catch {
         return null;
     }
+}
+
+
+// ── Docking file downloads ────────────────────────────────────────────────────
+//
+// Three files are generated per docked compound and can be downloaded:
+//   pdbqt       → out_{idx}.pdbqt                  (raw Vina output, all poses)
+//   pose_pdb    → best_pose_{idx}_H.pdb             (pose 1 + hydrogens via obabel)
+//   complex_pdb → complex_{idx}_PLIP_ready.pdb      (receptor + ligand, ready for PLIP)
+
+const DOCKING_FILE_LABELS: Record<DockingFileType, string> = {
+    pdbqt: "docked_poses.pdbqt",
+    pose_pdb: "pose1_with_H.pdb",
+    complex_pdb: "receptor_ligand_complex.pdb",
+};
+
+/**
+ * Returns the direct download URL for a docking output file.
+ * Use as an <a href> when you want the browser to handle the download natively.
+ */
+export function getDockingFileUrl(
+    jobId: string,
+    compoundIndex: number,
+    type: DockingFileType,
+): string {
+    return `${BACKEND_URL}/api/v1/jobs/${jobId}/compounds/${compoundIndex}/download/${type}`;
+}
+
+/**
+ * Fetches a docking file from the backend and triggers a browser download.
+ * Shows a typed error on failure (e.g. "obabel not installed", "docking not run").
+ *
+ * Usage in a component:
+ *   await downloadDockingFile(jobId, index, "complex_pdb");
+ */
+export async function downloadDockingFile(
+    jobId: string,
+    compoundIndex: number,
+    type: DockingFileType,
+): Promise<void> {
+    const url = getDockingFileUrl(jobId, compoundIndex, type);
+    const filename = `compound_${compoundIndex}_${DOCKING_FILE_LABELS[type]}`;
+
+    const response = await fetch(url);
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({})) as { detail?: string };
+        throw new Error(err.detail ?? `Download failed: HTTP ${response.status}`);
+    }
+
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(objectUrl);
 }
 
 

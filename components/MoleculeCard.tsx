@@ -5,12 +5,13 @@ import {
     ChevronDown, ChevronUp, Copy, CheckCheck,
     FlaskConical, Activity, Dna, GitBranch, Info,
     AlertTriangle, AlertCircle, Lightbulb,
+    Download, Loader2,
 } from "lucide-react";
-import type { CompoundResult, ScoreBreakdown, ADMETFlagDetail } from "@/lib/api";
+import type { CompoundResult, ScoreBreakdown, ADMETFlagDetail, DockingFileType } from "@/lib/api";
 import {
     getScoreColor, getAffinityColor,
     formatProbability, getScoreBreakdown,
-    getFlagSeverityColor,
+    getFlagSeverityColor, downloadDockingFile,
 } from "@/lib/api";
 
 
@@ -59,7 +60,6 @@ const getComplexityLabel = (score: number): { label: string; color: string } => 
 
 
 // ── Structured ADMET flag card ────────────────────────────────────────────────
-// ← NEW: replaces the old `<p key={flag}>⚠ {flag}</p>` that crashed
 const ADMETFlagCard = ({ flag }: { flag: ADMETFlagDetail }) => {
     const [open, setOpen] = useState(false);
     const severityClasses = getFlagSeverityColor(flag.severity);
@@ -102,6 +102,77 @@ const ADMETFlagCard = ({ flag }: { flag: ADMETFlagDetail }) => {
 };
 
 
+// ── Docking file download button ──────────────────────────────────────────────
+interface DownloadBtnProps {
+    label: string;
+    fileType: DockingFileType;
+    tooltip: string;
+    jobId: string;
+    compoundIndex: number;
+}
+
+const DownloadBtn = ({ label, fileType, tooltip, jobId, compoundIndex }: DownloadBtnProps) => {
+    const [loading, setLoading] = useState(false);
+    const [error, setError]     = useState<string | null>(null);
+
+    const handleClick = async () => {
+        setLoading(true);
+        setError(null);
+        try {
+            await downloadDockingFile(jobId, compoundIndex, fileType);
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : "Download failed";
+            setError(msg);
+            // Auto-clear the error after 5 s so the button isn't permanently broken
+            setTimeout(() => setError(null), 5000);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="group relative">
+            <button
+                onClick={handleClick}
+                disabled={loading}
+                className={`
+                    flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium
+                    border transition-colors
+                    ${error
+                        ? "border-red-700 bg-red-950/40 text-red-400 hover:bg-red-900/40"
+                        : "border-gray-700 bg-gray-800/60 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+                    }
+                    disabled:opacity-60 disabled:cursor-not-allowed
+                `}
+                title={tooltip}
+            >
+                {loading
+                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                    : <Download className="w-3 h-3" />
+                }
+                <span>{label}</span>
+            </button>
+
+            {/* Inline error tooltip */}
+            {error && (
+                <div className="absolute bottom-full left-0 mb-1.5 w-64 bg-gray-900 border border-red-800 rounded-lg px-2.5 py-2 text-[11px] text-red-400 z-50 shadow-xl leading-relaxed">
+                    {error}
+                </div>
+            )}
+
+            {/* Hover tooltip (only shown when no error) */}
+            {!error && (
+                <span className="absolute bottom-full left-0 mb-1.5 w-60 bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-2 text-xs text-gray-300 invisible group-hover:visible z-50 pointer-events-none leading-relaxed shadow-xl">
+                    {tooltip}
+                </span>
+            )}
+        </div>
+    );
+};
+
+
+// ── Main card component ───────────────────────────────────────────────────────
+
 export default function MoleculeCard({ compound, jobId, index }: MoleculeCardProps) {
     const [expanded, setExpanded] = useState(false);
     const [copied, setCopied] = useState(false);
@@ -134,7 +205,6 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
             score >= 45 ? "border-yellow-500 text-yellow-400" :
                 "border-red-600 text-red-400";
 
-    // ← Use flag_summary (string[]) for the compact badge count
     const flagCount = compound.admet?.flag_summary?.length ?? compound.admet?.flags?.length ?? 0;
 
     return (
@@ -175,7 +245,6 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                         )}
                         {compound.admet && (
                             <span className={compound.admet.passed ? "badge-pass" : "badge-warn"}>
-                                {/* ← safe: only reads count, never renders object */}
                                 ADMET {flagCount === 0
                                     ? "clean"
                                     : `${flagCount} flag${flagCount > 1 ? "s" : ""}`
@@ -285,7 +354,6 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                     ))}
                                 </div>
 
-                                {/* ← FIXED: flags is ADMETFlagDetail[] — use ADMETFlagCard, not <p>{flag}</p> */}
                                 {compound.admet.flags.length > 0 && (
                                     <div className="mt-2 pt-2 border-t border-gray-700 space-y-1.5">
                                         <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-1">
@@ -327,6 +395,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                         <span className="text-gray-300">{compound.docking.poses.length}</span>
                                     </div>
                                 </div>
+
                                 {compound.docking.poses.length > 1 && (
                                     <div className="mt-2 pt-2 border-t border-gray-700">
                                         <p className="text-xs text-gray-600 mb-1">Top poses</p>
@@ -341,6 +410,37 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                         </div>
                                     </div>
                                 )}
+
+                                {/* ── Download section ───────────────────────── */}
+                                <div className="mt-3 pt-3 border-t border-gray-700">
+                                    <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-2 flex items-center gap-1">
+                                        <Download className="w-3 h-3" />
+                                        Download docking files
+                                    </p>
+                                    <div className="flex flex-wrap gap-2">
+                                        <DownloadBtn
+                                            label="Raw .pdbqt"
+                                            fileType="pdbqt"
+                                            jobId={jobId}
+                                            compoundIndex={index}
+                                            tooltip="All Vina poses — exact 3D coordinates as Vina produced them. Load in PyMOL or pass to PLIP manually."
+                                        />
+                                        <DownloadBtn
+                                            label="Pose 1 + H (.pdb)"
+                                            fileType="pose_pdb"
+                                            jobId={jobId}
+                                            compoundIndex={index}
+                                            tooltip="Best pose only, hydrogens added via obabel. Ready for PLIP protein–ligand interaction analysis or PyMOL visualisation."
+                                        />
+                                        <DownloadBtn
+                                            label="PLIP Complex (.pdb)"
+                                            fileType="complex_pdb"
+                                            jobId={jobId}
+                                            compoundIndex={index}
+                                            tooltip="Receptor (protein ATOM records) + docked ligand (HETATM) merged into one file. Drop directly into PLIP or PyMOL — no manual merging needed."
+                                        />
+                                    </div>
+                                </div>
                             </div>
                         )}
 
@@ -436,7 +536,6 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                         );
                                     })}
                             </div>
-                            {/* Penalty notices */}
                             {breakdown.mw_fragment_penalty === true && (
                                 <p className="text-xs text-yellow-500 mt-2">⚠ Fragment penalty applied (MW &lt; 200 Da) — score halved.</p>
                             )}
