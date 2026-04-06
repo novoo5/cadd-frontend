@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
     Upload, FlaskConical, Loader2, AlertCircle,
     CheckCircle2, ExternalLink, X, TestTube, Zap,
+    History, RotateCcw,
 } from "lucide-react";
 import AdvancedSettings from "./AdvancedSettings";
 import {
@@ -23,11 +24,35 @@ import {
 
 const MYRICETIN_SMILES = "OC1=CC(=CC(O)=C1O)C1=C(O)C(=O)C2=C(O)C(O)=CC(O)=C2O1";
 
+// ── localStorage key for form memory ─────────────────────────────────────────
+const FORM_MEMORY_KEY = "cadd_form_settings_v1";
+
+// Shape of what we persist (everything except SMILES and File objects)
+interface SavedFormSettings {
+    pdbMode: "id" | "file";
+    pdbId: string;
+    numAnalogues: number;
+    directScoreOnly: boolean;
+    toxicityReportOnly: boolean;
+    solubilityFilter: SolubilityFilterMode;
+    lockedScaffoldSmarts: string;
+    pipelineSteps: PipelineSteps;
+    dockingSpeed: DockingSpeed;
+    bindingSiteMode: BindingSiteMode;
+    bindingSiteCoords: BindingSiteCoords;
+    bindingSiteResidues: BindingSiteResidues;
+    mwMin: number;
+    mwMax: number;
+    maxLipinskiViolations: number | null;
+}
+
 
 export default function InputForm() {
     const router = useRouter();
 
     // ── Form state ────────────────────────────────────────────────────────────
+    // SMILES is intentionally NOT persisted — it's the one thing you change
+    // between jobs. Everything else (protein, toggles, coordinates) is saved.
     const [smiles, setSmiles] = useState(MYRICETIN_SMILES);
     const [pdbMode, setPdbMode] = useState<"id" | "file">("id");
     const [pdbId, setPdbId] = useState("");
@@ -69,8 +94,121 @@ export default function InputForm() {
     const [error, setError] = useState<string | null>(null);
     const [backendAwake, setBackendAwake] = useState<boolean | null>(null);
 
+    // ── Memory indicator state ────────────────────────────────────────────────
+    const [savedAt, setSavedAt] = useState<Date | null>(null);
+    const [memoryRestored, setMemoryRestored] = useState(false);
+
     const fileInputRef = useRef<HTMLInputElement>(null);
     const pdbDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+
+    // ── 1. Restore saved settings on first mount ──────────────────────────────
+    useEffect(() => {
+        try {
+            const raw = localStorage.getItem(FORM_MEMORY_KEY);
+            if (!raw) return;
+            const s: Partial<SavedFormSettings> = JSON.parse(raw);
+
+            if (s.pdbMode) setPdbMode(s.pdbMode);
+            if (s.pdbId) setPdbId(s.pdbId);
+            if (s.numAnalogues != null) setNumAnalogues(s.numAnalogues);
+            if (s.directScoreOnly != null) setDirectScoreOnly(s.directScoreOnly);
+            if (s.toxicityReportOnly != null) setToxicityReportOnly(s.toxicityReportOnly);
+            if (s.solubilityFilter) setSolubilityFilter(s.solubilityFilter);
+            if (s.lockedScaffoldSmarts != null) setLockedScaffoldSmarts(s.lockedScaffoldSmarts);
+            if (s.pipelineSteps) setPipelineSteps(s.pipelineSteps);
+            if (s.dockingSpeed) setDockingSpeed(s.dockingSpeed);
+            if (s.bindingSiteMode) setBindingSiteMode(s.bindingSiteMode);
+            if (s.bindingSiteCoords) setBindingSiteCoords(s.bindingSiteCoords);
+            if (s.bindingSiteResidues) setBindingSiteResidues(s.bindingSiteResidues);
+            if (s.mwMin != null) setMwMin(s.mwMin);
+            if (s.mwMax != null) setMwMax(s.mwMax);
+            if ("maxLipinskiViolations" in s) setMaxLipinskiViolations(s.maxLipinskiViolations ?? null);
+
+            setMemoryRestored(true);
+            setSavedAt(new Date());
+        } catch {
+            // ignore corrupt localStorage
+        }
+    }, []);
+
+
+    // ── 2. Save settings whenever relevant fields change ──────────────────────
+    useEffect(() => {
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+
+        saveTimerRef.current = setTimeout(() => {
+            try {
+                const payload: SavedFormSettings = {
+                    pdbMode,
+                    pdbId,
+                    numAnalogues,
+                    directScoreOnly,
+                    toxicityReportOnly,
+                    solubilityFilter,
+                    lockedScaffoldSmarts,
+                    pipelineSteps,
+                    dockingSpeed,
+                    bindingSiteMode,
+                    bindingSiteCoords,
+                    bindingSiteResidues,
+                    mwMin,
+                    mwMax,
+                    maxLipinskiViolations,
+                };
+                localStorage.setItem(FORM_MEMORY_KEY, JSON.stringify(payload));
+                setSavedAt(new Date());
+            } catch {
+                // storage unavailable
+            }
+        }, 800);
+
+        return () => {
+            if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        };
+    }, [
+        pdbMode, pdbId, numAnalogues, directScoreOnly, toxicityReportOnly,
+        solubilityFilter, lockedScaffoldSmarts, pipelineSteps, dockingSpeed,
+        bindingSiteMode, bindingSiteCoords, bindingSiteResidues,
+        mwMin, mwMax, maxLipinskiViolations,
+    ]);
+
+
+    // ── 3. Clear saved settings ───────────────────────────────────────────────
+    const clearSavedSettings = () => {
+        try {
+            localStorage.removeItem(FORM_MEMORY_KEY);
+        } catch { }
+
+        setSavedAt(null);
+        setMemoryRestored(false);
+
+        setPdbMode("id");
+        setPdbId("");
+        setPdbFile(null);
+        setPdbMeta(null);
+        setNumAnalogues(25);
+        setDirectScoreOnly(false);
+        setToxicityReportOnly(false);
+        setSolubilityFilter("all");
+        setLockedScaffoldSmarts("");
+        setPipelineSteps({
+            drug_likeness: true,
+            admet: true,
+            binding_prefilter: true,
+            docking: true,
+            retrosynthesis: true,
+        });
+        setDockingSpeed("balanced");
+        setBindingSiteMode("auto");
+        setBindingSiteCoords({ x: 0, y: 0, z: 0, box_size: 20 });
+        setBindingSiteResidues({ chain: "A", residue_start: 1, residue_end: 100 });
+        setMwMin(200);
+        setMwMax(500);
+        setMaxLipinskiViolations(1);
+    };
+
 
     // ── Side effects ──────────────────────────────────────────────────────────
     useEffect(() => { pingBackend().then(setBackendAwake); }, []);
@@ -87,17 +225,16 @@ export default function InputForm() {
         }, 600);
     }, [pdbId]);
 
-    // Both toggles are fully independent — no mutual exclusion
+
     const handleToxicityReportOnlyChange = (v: boolean) => setToxicityReportOnly(v);
     const handleDirectScoreOnlyChange = (v: boolean) => setDirectScoreOnly(v);
+
 
     // ── Derived flags ─────────────────────────────────────────────────────────
     const toxOnly = toxicityReportOnly && !directScoreOnly;
     const bothModes = toxicityReportOnly && directScoreOnly;
-
-    // PDB never required when toxicity_report_only is on —
-    // orchestrator always takes ADMET-only shortcut regardless of direct_score_only
     const pdbRequired = !toxicityReportOnly;
+
 
     // ── Submit ────────────────────────────────────────────────────────────────
     const handleSubmit = async (e: React.FormEvent) => {
@@ -157,9 +294,39 @@ export default function InputForm() {
         }
     };
 
+
+    const formatSavedTime = (d: Date): string => {
+        const now = new Date();
+        const diff = Math.round((now.getTime() - d.getTime()) / 1000);
+        if (diff < 5) return "just now";
+        if (diff < 60) return `${diff}s ago`;
+        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+        return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    };
+
+
     // ── Render ────────────────────────────────────────────────────────────────
     return (
         <form onSubmit={handleSubmit} className="space-y-6">
+
+            {/* ── Memory restored banner ───────────────────────────────────── */}
+            {memoryRestored && (
+                <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-800/60 border border-gray-700/60 animate-slide-up">
+                    <span className="flex items-center gap-2 text-xs text-gray-400">
+                        <History className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                        Previous settings restored — just update your SMILES and submit.
+                    </span>
+                    <button
+                        type="button"
+                        onClick={clearSavedSettings}
+                        className="flex items-center gap-1 text-xs text-gray-600 hover:text-red-400 transition-colors ml-4 flex-shrink-0"
+                        title="Reset all settings to defaults and clear saved memory"
+                    >
+                        <RotateCcw className="w-3 h-3" />
+                        Reset
+                    </button>
+                </div>
+            )}
 
             {/* ── Backend status banner ────────────────────────────────────── */}
             {backendAwake === false && (
@@ -444,18 +611,30 @@ export default function InputForm() {
                 )}
             </button>
 
-            <p className="text-xs text-gray-600 text-center">
-                {bothModes
-                    ? "ADMET toxicity report on base compound only — no PDB needed, ~2–5 minutes."
-                    : toxOnly
-                        ? "Toxicity report only — ADMET screening completes in ~2–5 minutes."
-                        : directScoreOnly
-                            ? "Direct scoring skips analogue generation — results in 5–15 minutes."
-                            : numAnalogues >= 500
-                                ? `${numAnalogues} analogues requested — pipeline may take 60–90 minutes.`
-                                : "Pipeline takes 30–60 minutes depending on settings. You'll get a tracking URL immediately."
-                }
-            </p>
+            {/* ── Footer row with autosave status ──────────────────────────── */}
+            {!submitting && (
+                <div className="flex items-center justify-between">
+                    <p className="text-xs text-gray-600">
+                        {bothModes
+                            ? "ADMET toxicity report on base compound only — no PDB needed, ~2–5 minutes."
+                            : toxOnly
+                                ? "Toxicity report only — ADMET screening completes in ~2–5 minutes."
+                                : directScoreOnly
+                                    ? "Direct scoring skips analogue generation — results in 5–15 minutes."
+                                    : numAnalogues >= 500
+                                        ? `${numAnalogues} analogues requested — pipeline may take 60–90 minutes.`
+                                        : "Pipeline takes 30–60 minutes depending on settings. You'll get a tracking URL immediately."
+                        }
+                    </p>
+
+                    {savedAt && (
+                        <span className="flex items-center gap-1.5 text-xs text-gray-600 ml-4 flex-shrink-0 whitespace-nowrap">
+                            <History className="w-3 h-3 text-emerald-600" />
+                            Saved {formatSavedTime(savedAt)}
+                        </span>
+                    )}
+                </div>
+            )}
 
         </form>
     );

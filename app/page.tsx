@@ -1,6 +1,7 @@
 import { FlaskConical } from "lucide-react";
 import InputForm from "@/components/InputForm";
 
+
 const PIPELINE_STEPS = [
   { label: "Analogue Generation", desc: "RDKit BRICS" },
   { label: "Drug-likeness Filter", desc: "Lipinski RO5 + ESOL" },
@@ -9,6 +10,7 @@ const PIPELINE_STEPS = [
   { label: "Molecular Docking", desc: "GNINA 1.3" },
   { label: "Retrosynthesis", desc: "AiZynthFinder" },
 ];
+
 
 export default function HomePage() {
   return (
