@@ -3,7 +3,7 @@
 import { useState } from "react";
 import {
     ChevronDown, ChevronUp, Info, Zap, FlaskConical,
-    CheckCircle2, Lock, X,
+    CheckCircle2, Lock, X, Clock,
 } from "lucide-react";
 import type {
     PipelineSteps,
@@ -26,6 +26,11 @@ interface AdvancedSettingsProps {
 
     dockingSpeed: DockingSpeed;
     onDockingSpeedChange: (v: DockingSpeed) => void;
+
+    // ── NEW ──────────────────────────────────────────────────────────────────
+    maxDockingCompounds: number;
+    onMaxDockingCompoundsChange: (v: number) => void;
+    // ────────────────────────────────────────────────────────────────────────
 
     bindingSiteMode: BindingSiteMode;
     onBindingSiteModeChange: (v: BindingSiteMode) => void;
@@ -80,7 +85,7 @@ const STEPS: {
         {
             key: "binding_prefilter",
             label: "ML Binding Pre-filter",
-            desc: "GNN affinity ranking, keeps top 10 for docking (DeepChem)",
+            desc: "GNN affinity ranking — ranks all surviving compounds, sends the top N for docking (DeepChem AttentiveFP). N is controlled by the 'Max Compounds to Dock' setting below.",
         },
         {
             key: "docking",
@@ -94,11 +99,14 @@ const STEPS: {
         },
     ];
 
-const DOCKING_SPEEDS: { value: DockingSpeed; label: string; desc: string }[] = [
-    { value: "fast", label: "Fast", desc: "exhaustiveness=8, ~5 min/compound" },
-    { value: "balanced", label: "Balanced", desc: "exhaustiveness=16, ~10 min/compound" },
-    { value: "thorough", label: "Thorough", desc: "exhaustiveness=32, ~20 min/compound" },
+const DOCKING_SPEEDS: { value: DockingSpeed; label: string; desc: string; minPerCompound: number }[] = [
+    { value: "fast", label: "Fast", desc: "exhaustiveness=8, ~5 min/compound", minPerCompound: 5 },
+    { value: "balanced", label: "Balanced", desc: "exhaustiveness=16, ~10 min/compound", minPerCompound: 10 },
+    { value: "thorough", label: "Thorough", desc: "exhaustiveness=32, ~20 min/compound", minPerCompound: 20 },
 ];
+
+// Preset compound counts for docking
+const DOCKING_COUNT_PRESETS = [10, 25, 50] as const;
 
 const VIOLATION_OPTIONS: { value: string; label: string }[] = [
     { value: "1", label: "Strict — ≤1 violation (classic RO5)" },
@@ -164,6 +172,24 @@ const SCAFFOLD_PRESETS: { label: string; smarts: string; hint: string }[] = [
 const ANALOGUE_PRESETS = [25, 50, 100, 500, 1000] as const;
 
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function formatDockingTime(compounds: number, minPerCompound: number): string {
+    const total = compounds * minPerCompound;
+    if (total < 60) return `~${total} min`;
+    const h = Math.floor(total / 60);
+    const m = total % 60;
+    return m === 0 ? `~${h}h` : `~${h}h ${m}m`;
+}
+
+function dockingTimeSeverity(compounds: number, minPerCompound: number): "ok" | "warn" | "heavy" {
+    const total = compounds * minPerCompound;
+    if (total <= 60) return "ok";
+    if (total <= 300) return "warn";
+    return "heavy";
+}
+
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function AdvancedSettings({
@@ -173,6 +199,8 @@ export default function AdvancedSettings({
     onPipelineStepsChange,
     dockingSpeed,
     onDockingSpeedChange,
+    maxDockingCompounds,
+    onMaxDockingCompoundsChange,
     bindingSiteMode,
     onBindingSiteModeChange,
     bindingSiteCoords,
@@ -196,8 +224,8 @@ export default function AdvancedSettings({
 }: AdvancedSettingsProps) {
     const [open, setOpen] = useState(false);
     const [scaffoldPresetOpen, setScaffoldPresetOpen] = useState(false);
+    const [dockingCountCustom, setDockingCountCustom] = useState(false);
 
-    // FIX: derive these once so all UI logic uses consistent definitions
     const toxOnly = toxicityReportOnly && !directScoreOnly;
     const bothModes = toxicityReportOnly && directScoreOnly;
 
@@ -214,6 +242,14 @@ export default function AdvancedSettings({
     };
 
     const analoguesDisabled = directScoreOnly;
+
+    // Time estimate for docking
+    const activeSpeed = DOCKING_SPEEDS.find((s) => s.value === dockingSpeed)!;
+    const dockingTimeStr = formatDockingTime(maxDockingCompounds, activeSpeed.minPerCompound);
+    const dockingTimeSev = dockingTimeSeverity(maxDockingCompounds, activeSpeed.minPerCompound);
+
+    // Whether user typed a value not in presets
+    const isCustomCount = !DOCKING_COUNT_PRESETS.includes(maxDockingCompounds as typeof DOCKING_COUNT_PRESETS[number]);
 
     return (
         <div className="card mt-4">
@@ -239,6 +275,11 @@ export default function AdvancedSettings({
                     {lockedScaffoldSmarts.trim() && (
                         <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-900/50 border border-amber-700 text-amber-300">
                             <Lock className="w-2.5 h-2.5" /> Scaffold Lock
+                        </span>
+                    )}
+                    {pipelineSteps.docking && !toxOnly && maxDockingCompounds !== 10 && (
+                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-900/50 border border-blue-700 text-blue-300">
+                            Top {maxDockingCompounds} docked
                         </span>
                     )}
                 </span>
@@ -423,14 +464,11 @@ export default function AdvancedSettings({
                         </label>
                         <div className="space-y-2">
                             {STEPS.map(({ key, label, desc, locked }) => {
-                                // FIX: only force-skip in pure tox-only mode
-                                // In both_modes, full pipeline runs so nothing should be grayed
                                 const forceSkipped =
                                     toxOnly &&
                                     key !== "admet" &&
                                     key !== "drug_likeness";
 
-                                // ADMET is always forced on when toxicityReportOnly is set
                                 const forcedOn = toxicityReportOnly && key === "admet";
 
                                 return (
@@ -581,7 +619,6 @@ export default function AdvancedSettings({
                     </div>
 
                     {/* ── 6. Docking speed ─────────────────────────────────── */}
-                    {/* FIX: show when docking is on AND not pure tox-only mode */}
                     {pipelineSteps.docking && !toxOnly && (
                         <div>
                             <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
@@ -606,8 +643,99 @@ export default function AdvancedSettings({
                         </div>
                     )}
 
+                    {/* ── 6b. Max compounds to dock ────────────────────────── */}
+                    {pipelineSteps.docking && !toxOnly && (
+                        <div>
+                            <label className="block text-xs font-medium text-gray-400 mb-1 uppercase tracking-wider">
+                                Max Compounds to Dock
+                                <span className="ml-2 normal-case font-normal text-gray-600">
+                                    top-ranked by ML pre-filter
+                                </span>
+                            </label>
+                            <p className="text-xs text-gray-500 mb-3">
+                                After the ML pre-filter ranks all surviving analogues by predicted
+                                binding affinity, only the top N are passed to Vina. Higher N =
+                                better hit coverage but significantly longer runtime.
+                            </p>
+
+                            {/* Preset buttons */}
+                            <div className="flex gap-2 mb-2">
+                                {DOCKING_COUNT_PRESETS.map((n) => (
+                                    <button
+                                        key={n}
+                                        type="button"
+                                        onClick={() => {
+                                            onMaxDockingCompoundsChange(n);
+                                            setDockingCountCustom(false);
+                                        }}
+                                        className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-all ${maxDockingCompounds === n && !dockingCountCustom
+                                            ? "bg-emerald-900/50 border-emerald-600 text-emerald-300"
+                                            : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
+                                            }`}
+                                    >
+                                        Top {n}
+                                    </button>
+                                ))}
+                                <button
+                                    type="button"
+                                    onClick={() => setDockingCountCustom(true)}
+                                    className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-all ${dockingCountCustom || isCustomCount
+                                        ? "bg-emerald-900/50 border-emerald-600 text-emerald-300"
+                                        : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
+                                        }`}
+                                >
+                                    Custom
+                                </button>
+                            </div>
+
+                            {/* Custom input — shown when Custom is selected or value is non-preset */}
+                            {(dockingCountCustom || isCustomCount) && (
+                                <div className="flex items-center gap-2 mb-2 animate-slide-up">
+                                    <span className="text-xs text-gray-500 flex-shrink-0">
+                                        Count (1–50):
+                                    </span>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        max={50}
+                                        value={maxDockingCompounds}
+                                        onChange={(e) => {
+                                            const v = Math.max(1, Math.min(50, parseInt(e.target.value) || 10));
+                                            onMaxDockingCompoundsChange(v);
+                                        }}
+                                        className="w-20 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-emerald-600"
+                                        autoFocus
+                                    />
+                                    <span className="text-xs text-gray-600">max 50</span>
+                                </div>
+                            )}
+
+                            {/* Time estimate badge */}
+                            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs ${dockingTimeSev === "ok" ? "bg-emerald-950/20 border-emerald-900/50 text-emerald-400" :
+                                    dockingTimeSev === "warn" ? "bg-yellow-950/20 border-yellow-900/50 text-yellow-400" :
+                                        "bg-red-950/20 border-red-900/50 text-red-400"
+                                }`}>
+                                <Clock className="w-3.5 h-3.5 flex-shrink-0" />
+                                <span>
+                                    <strong>{dockingTimeStr}</strong> docking time
+                                    {" "}({maxDockingCompounds} compound{maxDockingCompounds !== 1 ? "s" : ""} × {activeSpeed.minPerCompound} min/{" "}
+                                    {dockingSpeed})
+                                </span>
+                                {dockingTimeSev === "heavy" && (
+                                    <span className="ml-auto text-[10px] text-red-500 flex-shrink-0">
+                                        ⚠ Very long job
+                                    </span>
+                                )}
+                                {dockingTimeSev === "warn" && (
+                                    <span className="ml-auto text-[10px] text-yellow-600 flex-shrink-0">
+                                        Consider Fast speed
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
                     {/* ── 7. Binding site ───────────────────────────────────── */}
-                    {/* FIX: show when docking is on AND not pure tox-only mode */}
                     {pipelineSteps.docking && !toxOnly && (
                         <div>
                             <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
