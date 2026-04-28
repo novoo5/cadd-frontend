@@ -1,9 +1,7 @@
 // All communication between the Next.js frontend and the FastAPI backend lives here.
 // Never call fetch() directly from a component — always go through this module.
 
-
 const BACKEND_URL = "https://novoo5-cadd-backend.hf.space";
-
 
 // ── Enums / union types ───────────────────────────────────────────────────────
 
@@ -12,9 +10,11 @@ export type BindingSiteMode = "auto" | "coordinates" | "residues";
 export type StepStatus = "waiting" | "running" | "done" | "skipped" | "failed";
 export type JobStatus = "queued" | "running" | "done" | "failed";
 export type SolubilityFilterMode = "soluble_only" | "allow_slightly" | "all";
-
 export type DockingFileType = "pdbqt" | "pose_pdb" | "complex_pdb";
-
+export type ADMETPreset = "balanced" | "cns" | "oral" | "custom";
+export type ADMETCategory = "absorption" | "distribution" | "metabolism" | "excretion" | "toxicity" | "physchem" | "other";
+export type NarrativeLevel = "info" | "good" | "warning" | "danger";
+export type OverallRisk = "low" | "moderate" | "high";
 
 // ── Pipeline config types ─────────────────────────────────────────────────────
 
@@ -27,13 +27,81 @@ export interface PipelineSteps {
 }
 
 export interface BindingSiteCoords {
-    x: number; y: number; z: number; box_size: number;
+    x: number;
+    y: number;
+    z: number;
+    box_size: number;
 }
 
 export interface BindingSiteResidues {
-    chain: string; residue_start: number; residue_end: number;
+    chain: string;
+    residue_start: number;
+    residue_end: number;
 }
 
+// ── ADMET config types (mirrors backend ADMETTuningConfig) ────────────────────
+
+export interface ADMETThresholdConfig {
+    enabled?: boolean;
+    cutoff: number;
+    direction: "above" | "below";
+    severity_high: number | null;
+    hard_fail: boolean;
+    threshold_str?: string | null;
+    implication?: string | null;
+    recommendation?: string | null;
+}
+
+export interface ADMETTuningConfig {
+    preset?: ADMETPreset;
+    include_full_profile?: boolean;
+    herg_inhibition?: ADMETThresholdConfig;
+    hepatotoxicity?: ADMETThresholdConfig;
+    caco2_permeability?: ADMETThresholdConfig;
+    oral_bioavailability?: ADMETThresholdConfig;
+    bbb_penetration?: ADMETThresholdConfig;
+}
+
+// Default ADMET threshold presets for use in UI initialisation
+
+export const ADMET_PRESET_DEFAULTS: Record<ADMETPreset, Partial<ADMETTuningConfig>> = {
+    balanced: {
+        preset: "balanced",
+        herg_inhibition: { cutoff: 0.50, direction: "above", severity_high: 0.85, hard_fail: true },
+        hepatotoxicity: { cutoff: 0.50, direction: "above", severity_high: 0.85, hard_fail: true },
+        caco2_permeability: { cutoff: -5.15, direction: "below", severity_high: -6.5, hard_fail: false },
+        oral_bioavailability: { cutoff: 0.30, direction: "below", severity_high: 0.10, hard_fail: false },
+        bbb_penetration: { cutoff: 0.30, direction: "below", severity_high: null, hard_fail: false },
+    },
+    cns: {
+        preset: "cns",
+        bbb_penetration: { cutoff: 0.60, direction: "below", severity_high: 0.30, hard_fail: false },
+    },
+    oral: {
+        preset: "oral",
+        caco2_permeability: { cutoff: -5.00, direction: "below", severity_high: -6.00, hard_fail: false },
+        oral_bioavailability: { cutoff: 0.40, direction: "below", severity_high: 0.20, hard_fail: false },
+    },
+    custom: {
+        preset: "custom",
+    },
+};
+
+export const ADMET_ENDPOINT_LABELS: Record<string, string> = {
+    herg_inhibition: "hERG Inhibition",
+    hepatotoxicity: "Hepatotoxicity",
+    caco2_permeability: "Caco-2 Permeability",
+    oral_bioavailability: "Oral Bioavailability",
+    bbb_penetration: "BBB Penetration",
+};
+
+export const ADMET_ENDPOINT_UNITS: Record<string, string> = {
+    herg_inhibition: "probability",
+    hepatotoxicity: "probability",
+    caco2_permeability: "log cm/s",
+    oral_bioavailability: "probability",
+    bbb_penetration: "probability",
+};
 
 // ── Job request ───────────────────────────────────────────────────────────────
 
@@ -45,18 +113,18 @@ export interface JobRequest {
     direct_score_only?: boolean;
     solubility_filter?: SolubilityFilterMode;
     toxicity_report_only?: boolean;
+    admet_config?: ADMETTuningConfig;
     pipeline_steps: PipelineSteps;
     binding_site_mode: BindingSiteMode;
     binding_site_coords?: BindingSiteCoords;
     binding_site_residues?: BindingSiteResidues;
     docking_speed: DockingSpeed;
-    max_docking_compounds?: number;             // ← NEW
+    max_docking_compounds?: number;
     mw_min?: number;
     mw_max?: number;
     max_lipinski_violations?: number | null;
     locked_scaffold_smarts?: string | null;
 }
-
 
 // ── Response types ────────────────────────────────────────────────────────────
 
@@ -85,80 +153,150 @@ export interface JobStatusResponse {
     error?: string;
 }
 
-
 // ── Pipeline result types ─────────────────────────────────────────────────────
 
 export interface LipinskiResult {
-    passed: boolean; mw: number; logp: number;
-    hbd: number; hba: number; logs: number; solubility_class: string;
+    passed: boolean;
+    mw: number;
+    logp: number;
+    hbd: number;
+    hba: number;
+    logs: number;
+    solubility_class: string;
 }
 
 export interface ADMETFlagDetail {
-    property_name: string; value: number; threshold: string; direction: string;
-    severity: "high" | "moderate" | "low"; implication: string; recommendation: string;
+    property_name: string;
+    value: number;
+    threshold: string;
+    direction: "above" | "below";
+    severity: "high" | "moderate" | "low";
+    implication: string;
+    recommendation: string;
+}
+
+export interface ADMETEndpointValue {
+    key: string;
+    label: string;
+    category: ADMETCategory;
+    value: number;
+    display_value: string;
+    unit?: string | null;
+    interpretation?: string | null;
+    threshold_applied?: string | null;
+    severity?: "high" | "moderate" | "low" | null;
+    hard_fail: boolean;
+    triggered: boolean;
+}
+
+export interface ADMETNarrativeBlock {
+    title: string;
+    level: NarrativeLevel;
+    body: string;
 }
 
 export interface ADMETResult {
-    passed: boolean; herg_inhibition: number; caco2_permeability: number;
-    bbb_penetration: number; hepatotoxicity: number; oral_bioavailability: number;
-    flags: ADMETFlagDetail[]; flag_summary: string[];
+    passed: boolean;
+    overall_risk: OverallRisk;
+    herg_inhibition: number;
+    caco2_permeability: number;
+    bbb_penetration: number;
+    hepatotoxicity: number;
+    oral_bioavailability: number;
+    flags: ADMETFlagDetail[];
+    flag_summary: string[];
+    decision_basis: string[];
+    narrative: ADMETNarrativeBlock[];
+    endpoint_table: ADMETEndpointValue[];
+    extra_properties: Record<string, number>;
+    thresholds_used: Record<string, ADMETThresholdConfig>;
 }
 
 export interface BindingPrefilterResult {
-    passed: boolean; predicted_affinity_kcal: number; confidence: number;
+    passed: boolean;
+    predicted_affinity_kcal: number;
+    confidence: number;
 }
 
 export interface DockingPose {
-    rank: number; affinity_kcal: number; rmsd_lb: number; rmsd_ub: number;
+    rank: number;
+    affinity_kcal: number;
+    rmsd_lb: number;
+    rmsd_ub: number;
 }
 
 export interface DockingResult {
-    passed: boolean; best_affinity_kcal: number; cnn_score: number; poses: DockingPose[];
+    passed: boolean;
+    best_affinity_kcal: number;
+    cnn_score: number;
+    poses: DockingPose[];
 }
 
 export interface RetrosynthesisStep {
-    step_number: number; reaction_smarts: string;
-    starting_materials: string[]; confidence: number;
+    step_number: number;
+    reaction_smarts: string;
+    starting_materials: string[];
+    confidence: number;
 }
 
 export interface RetrosynthesisResult {
-    feasible: boolean; num_steps: number;
-    route: RetrosynthesisStep[]; complexity_score: number;
+    feasible: boolean;
+    num_steps: number;
+    route: RetrosynthesisStep[];
+    complexity_score: number;
 }
 
 export interface CompoundResult {
-    smiles: string; canonical_smiles: string; rank?: number; final_score?: number;
-    lipinski?: LipinskiResult; admet?: ADMETResult;
-    binding_prefilter?: BindingPrefilterResult; docking?: DockingResult;
+    smiles: string;
+    canonical_smiles: string;
+    rank?: number;
+    final_score?: number;
+    lipinski?: LipinskiResult;
+    admet?: ADMETResult;
+    binding_prefilter?: BindingPrefilterResult;
+    docking?: DockingResult;
     retrosynthesis?: RetrosynthesisResult;
 }
 
 export interface BindingSiteInfo {
     detection_mode: "native_ligand" | "protein_centroid" | "user_coordinates" | "user_residues";
     detected_ligand_name: string | null;
-    center_x: number; center_y: number; center_z: number; box_size: number;
+    center_x: number;
+    center_y: number;
+    center_z: number;
+    box_size: number;
 }
 
 export interface JobResultsResponse {
-    job_id: string; base_smiles: string;
-    total_analogues_generated: number; compounds_after_lipinski: number;
-    compounds_after_admet: number; compounds_after_prefilter: number;
-    compounds_docked: number; final_ranked_compounds: CompoundResult[];
+    job_id: string;
+    base_smiles: string;
+    total_analogues_generated: number;
+    compounds_after_lipinski: number;
+    compounds_after_admet: number;
+    compounds_after_prefilter: number;
+    compounds_docked: number;
+    final_ranked_compounds: CompoundResult[];
     binding_site_info?: BindingSiteInfo | null;
-    created_at: string; completed_at: string;
+    created_at: string;
+    completed_at: string;
 }
 
 export interface ScoreBreakdownItem {
-    raw: string; contribution: number; max_possible: number;
+    raw: string;
+    contribution: number;
+    max_possible: number;
 }
 
 export interface ScoreBreakdown {
-    docking_affinity?: ScoreBreakdownItem; cnn_score?: ScoreBreakdownItem;
-    admet_safety?: ScoreBreakdownItem; solubility?: ScoreBreakdownItem;
-    synthesis_ease?: ScoreBreakdownItem; binding_prefilter?: ScoreBreakdownItem;
-    mw_fragment_penalty?: boolean; final_score?: number;
+    docking_affinity?: ScoreBreakdownItem;
+    cnn_score?: ScoreBreakdownItem;
+    admet_safety?: ScoreBreakdownItem;
+    solubility?: ScoreBreakdownItem;
+    synthesis_ease?: ScoreBreakdownItem;
+    binding_prefilter?: ScoreBreakdownItem;
+    mw_fragment_penalty?: boolean;
+    final_score?: number;
 }
-
 
 // ── API functions ─────────────────────────────────────────────────────────────
 
@@ -181,7 +319,7 @@ export async function submitJobWithFile(
     options: {
         num_analogues: number;
         docking_speed: DockingSpeed;
-        max_docking_compounds?: number;          // ← NEW
+        max_docking_compounds?: number;
         binding_site_mode: BindingSiteMode;
         pipeline_steps: PipelineSteps;
         direct_score_only?: boolean;
@@ -191,36 +329,68 @@ export async function submitJobWithFile(
         solubility_filter?: SolubilityFilterMode;
         toxicity_report_only?: boolean;
         locked_scaffold_smarts?: string;
+        admet_config?: ADMETTuningConfig;
     }
 ): Promise<JobSubmitResponse> {
-    const formData = new FormData();
-    formData.append("smiles", smiles);
-    if (pdbFile !== null) formData.append("pdb_file", pdbFile);
-    formData.append("num_analogues", String(options.num_analogues));
-    formData.append("docking_speed", options.docking_speed);
-    formData.append("max_docking_compounds", String(options.max_docking_compounds ?? 10)); // ← NEW
-    formData.append("binding_site_mode", options.binding_site_mode);
-    formData.append("direct_score_only", String(options.direct_score_only ?? false));
-    formData.append("mw_min", String(options.mw_min ?? 200));
-    formData.append("mw_max", String(options.mw_max ?? 500));
-    formData.append(
-        "max_lipinski_violations",
-        String(options.max_lipinski_violations === null ? -1 : (options.max_lipinski_violations ?? 1))
-    );
-    formData.append("solubility_filter", options.solubility_filter ?? "all");
-    formData.append("toxicity_report_only", String(options.toxicity_report_only ?? false));
-    if (options.locked_scaffold_smarts) formData.append("locked_scaffold_smarts", options.locked_scaffold_smarts);
+    if (pdbFile !== null) {
+        const formData = new FormData();
+        formData.append("smiles", smiles);
+        formData.append("pdb_file", pdbFile);
+        formData.append("num_analogues", String(options.num_analogues));
+        formData.append("docking_speed", options.docking_speed);
+        formData.append("max_docking_compounds", String(options.max_docking_compounds ?? 10));
+        formData.append("binding_site_mode", options.binding_site_mode);
+        formData.append("direct_score_only", String(options.direct_score_only ?? false));
+        formData.append("mw_min", String(options.mw_min ?? 200));
+        formData.append("mw_max", String(options.mw_max ?? 500));
+        formData.append(
+            "max_lipinski_violations",
+            String(options.max_lipinski_violations === null ? -1 : (options.max_lipinski_violations ?? 1))
+        );
+        formData.append("solubility_filter", options.solubility_filter ?? "all");
+        formData.append("toxicity_report_only", String(options.toxicity_report_only ?? false));
+        if (options.locked_scaffold_smarts) {
+            formData.append("locked_scaffold_smarts", options.locked_scaffold_smarts);
+        }
+        // Serialise admet_config as a JSON string field — unpack on backend in the upload router
+        if (options.admet_config) {
+            formData.append("admet_config", JSON.stringify(options.admet_config));
+        }
 
-    const response = await fetch(`${BACKEND_URL}/api/v1/jobs/upload`, { method: "POST", body: formData });
-    if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(error?.detail || `File upload failed with status ${response.status}`);
+        const response = await fetch(`${BACKEND_URL}/api/v1/jobs/upload`, {
+            method: "POST",
+            body: formData,
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error?.detail || `File upload failed with status ${response.status}`);
+        }
+        return response.json();
     }
-    return response.json();
+
+    // No file — send JSON directly so admet_config nests cleanly
+    return submitJob({
+        smiles,
+        num_analogues: options.num_analogues,
+        docking_speed: options.docking_speed,
+        max_docking_compounds: options.max_docking_compounds ?? 10,
+        binding_site_mode: options.binding_site_mode,
+        pipeline_steps: options.pipeline_steps,
+        direct_score_only: options.direct_score_only ?? false,
+        mw_min: options.mw_min ?? 200,
+        mw_max: options.mw_max ?? 500,
+        max_lipinski_violations: options.max_lipinski_violations ?? 1,
+        solubility_filter: options.solubility_filter ?? "all",
+        toxicity_report_only: options.toxicity_report_only ?? false,
+        locked_scaffold_smarts: options.locked_scaffold_smarts ?? null,
+        admet_config: options.admet_config,
+    });
 }
 
 export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/jobs/${jobId}/status`, { cache: "no-store" });
+    const response = await fetch(`${BACKEND_URL}/api/v1/jobs/${jobId}/status`, {
+        cache: "no-store",
+    });
     if (!response.ok) {
         if (response.status === 404) throw new Error(`Job '${jobId}' not found. It may have expired.`);
         throw new Error(`Status fetch failed: HTTP ${response.status}`);
@@ -229,7 +399,9 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
 }
 
 export async function getJobResults(jobId: string): Promise<JobResultsResponse | null> {
-    const response = await fetch(`${BACKEND_URL}/api/v1/jobs/${jobId}/results`, { cache: "no-store" });
+    const response = await fetch(`${BACKEND_URL}/api/v1/jobs/${jobId}/results`, {
+        cache: "no-store",
+    });
     if (response.status === 202) return null;
     if (!response.ok) {
         const error = await response.json().catch(() => ({}));
@@ -238,10 +410,13 @@ export async function getJobResults(jobId: string): Promise<JobResultsResponse |
     return response.json();
 }
 
-export async function getScoreBreakdown(jobId: string, compoundIndex: number): Promise<ScoreBreakdown> {
+export async function getScoreBreakdown(
+    jobId: string,
+    compoundIndex: number
+): Promise<ScoreBreakdown> {
     const response = await fetch(
         `${BACKEND_URL}/api/v1/jobs/${jobId}/score-breakdown/${compoundIndex}`,
-        { cache: "no-store" },
+        { cache: "no-store" }
     );
     if (!response.ok) throw new Error(`Score breakdown fetch failed: HTTP ${response.status}`);
     return response.json();
@@ -250,15 +425,22 @@ export async function getScoreBreakdown(jobId: string, compoundIndex: number): P
 export async function pingBackend(): Promise<boolean> {
     try {
         const response = await fetch(`${BACKEND_URL}/api/v1/health/ping`, {
-            cache: "no-store", signal: AbortSignal.timeout(5000),
+            cache: "no-store",
+            signal: AbortSignal.timeout(5000),
         });
         return response.ok;
-    } catch { return false; }
+    } catch {
+        return false;
+    }
 }
 
 export async function fetchPdbMetadata(
-    pdbId: string,
-): Promise<{ title: string; resolution_angstrom: number | null; protein_chains: number } | null> {
+    pdbId: string
+): Promise<{
+    title: string;
+    resolution_angstrom: number | null;
+    protein_chains: number;
+} | null> {
     try {
         const query = `{ entry(entry_id: "${pdbId.toUpperCase()}") { struct { title } rcsb_entry_info { resolution_combined polymer_entity_count_protein } } }`;
         const response = await fetch("https://data.rcsb.org/graphql", {
@@ -276,15 +458,12 @@ export async function fetchPdbMetadata(
             resolution_angstrom: entry.rcsb_entry_info?.resolution_combined?.[0] || null,
             protein_chains: entry.rcsb_entry_info?.polymer_entity_count_protein || 0,
         };
-    } catch { return null; }
+    } catch {
+        return null;
+    }
 }
 
-
 // ── Docking file downloads ────────────────────────────────────────────────────
-//
-//   pdbqt       → out_{idx}.pdbqt                  (raw Vina output, all poses)
-//   pose_pdb    → best_pose_{idx}_H.pdb             (pose 1 + hydrogens via obabel)
-//   complex_pdb → complex_{idx}_PLIP_ready.pdb      (receptor + ligand, ready for PLIP)
 
 const DOCKING_FILE_LABELS: Record<DockingFileType, string> = {
     pdbqt: "docked_poses.pdbqt",
@@ -292,20 +471,24 @@ const DOCKING_FILE_LABELS: Record<DockingFileType, string> = {
     complex_pdb: "receptor_ligand_complex.pdb",
 };
 
-export function getDockingFileUrl(jobId: string, compoundIndex: number, type: DockingFileType): string {
+export function getDockingFileUrl(
+    jobId: string,
+    compoundIndex: number,
+    type: DockingFileType
+): string {
     return `${BACKEND_URL}/api/v1/jobs/${jobId}/compounds/${compoundIndex}/download/${type}`;
 }
 
 export async function downloadDockingFile(
     jobId: string,
     compoundIndex: number,
-    type: DockingFileType,
+    type: DockingFileType
 ): Promise<void> {
     const url = getDockingFileUrl(jobId, compoundIndex, type);
     const filename = `compound_${compoundIndex}_${DOCKING_FILE_LABELS[type]}`;
     const response = await fetch(url);
     if (!response.ok) {
-        const err = await response.json().catch(() => ({})) as { detail?: string };
+        const err = (await response.json().catch(() => ({}))) as { detail?: string };
         throw new Error(err.detail ?? `Download failed: HTTP ${response.status}`);
     }
     const blob = await response.blob();
@@ -316,7 +499,6 @@ export async function downloadDockingFile(
     anchor.click();
     URL.revokeObjectURL(objectUrl);
 }
-
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -338,7 +520,35 @@ export function getFlagSeverityColor(severity: "high" | "moderate" | "low"): str
     return "text-gray-400 bg-gray-800/40 border-gray-700";
 }
 
-export function formatProbability(value: number): string { return `${(value * 100).toFixed(1)}%`; }
+export function getRiskBadgeColor(risk: OverallRisk): string {
+    if (risk === "high") return "text-red-400 bg-red-950/40 border-red-800";
+    if (risk === "moderate") return "text-yellow-400 bg-yellow-950/40 border-yellow-800";
+    return "text-emerald-400 bg-emerald-950/40 border-emerald-800";
+}
+
+export function getNarrativeLevelColor(level: NarrativeLevel): string {
+    if (level === "danger") return "border-red-800 bg-red-950/30 text-red-300";
+    if (level === "warning") return "border-yellow-800 bg-yellow-950/30 text-yellow-300";
+    if (level === "good") return "border-emerald-800 bg-emerald-950/30 text-emerald-300";
+    return "border-gray-700 bg-gray-900/40 text-gray-300";
+}
+
+export function getCategoryColor(category: ADMETCategory): string {
+    const map: Record<ADMETCategory, string> = {
+        absorption: "text-blue-400",
+        distribution: "text-purple-400",
+        metabolism: "text-yellow-400",
+        excretion: "text-cyan-400",
+        toxicity: "text-red-400",
+        physchem: "text-gray-400",
+        other: "text-gray-500",
+    };
+    return map[category] ?? "text-gray-500";
+}
+
+export function formatProbability(value: number): string {
+    return `${(value * 100).toFixed(1)}%`;
+}
 
 export function formatDuration(seconds: number): string {
     if (seconds < 60) return `${seconds.toFixed(1)}s`;

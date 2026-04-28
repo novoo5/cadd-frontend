@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
     ChevronDown, ChevronUp, Copy, CheckCheck,
     FlaskConical, Activity, Dna, GitBranch, Info,
     AlertTriangle, AlertCircle, Lightbulb,
-    Download, Loader2,
+    Download, Loader2, BookOpen, Layers, Shield,
+    CheckCircle2,
 } from "lucide-react";
 import type { CompoundResult, ScoreBreakdown, ADMETFlagDetail, DockingFileType } from "@/lib/api";
 import {
@@ -15,25 +16,66 @@ import {
 } from "@/lib/api";
 
 
-interface MoleculeCardProps {
-    compound: CompoundResult;
-    jobId: string;
-    index: number;
+// ── Extended ADMET types ───────────────────────────────────────────────────────
+// These live here until api.ts is updated to include them from the backend schema.
+
+interface ADMETNarrativeBlock {
+    title: string;
+    level: "info" | "good" | "warning" | "danger";
+    body: string;
+}
+
+interface ADMETEndpointValue {
+    key: string;
+    label: string;
+    category: "absorption" | "distribution" | "metabolism" | "excretion" | "toxicity" | "physchem" | "other";
+    value: number;
+    display_value: string;
+    unit?: string | null;
+    interpretation?: string | null;
+    threshold_applied?: string | null;
+    severity?: string | null;
+    hard_fail: boolean;
+    triggered: boolean;
+}
+
+type OverallRisk = "low" | "moderate" | "high";
+
+// Augmented type — works with old backend (new fields optional) and new backend
+interface ExtendedADMET {
+    passed: boolean;
+    overall_risk?: OverallRisk;
+    herg_inhibition: number;
+    caco2_permeability: number;
+    bbb_penetration: number;
+    hepatotoxicity: number;
+    oral_bioavailability: number;
+    flags: ADMETFlagDetail[];
+    flag_summary: string[];
+    decision_basis?: string[];
+    narrative?: ADMETNarrativeBlock[];
+    endpoint_table?: ADMETEndpointValue[];
+    extra_properties?: Record<string, number>;
 }
 
 
-// ── Simple hover tooltip ──────────────────────────────────────────────────────
-const Tip = ({ text }: { text: string }) => (
-    <span className="group relative inline-flex items-center ml-1 cursor-help">
-        <Info className="w-3 h-3 text-gray-600 group-hover:text-gray-400 transition-colors" />
-        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-56 bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-2 text-xs text-gray-300 invisible group-hover:visible z-50 pointer-events-none leading-relaxed shadow-xl">
-            {text}
-        </span>
-    </span>
-);
+// ── Constants ─────────────────────────────────────────────────────────────────
 
+const CATEGORY_ORDER = [
+    "absorption", "distribution", "metabolism",
+    "excretion", "toxicity", "physchem", "other",
+] as const;
 
-// ── Score breakdown label tooltips ────────────────────────────────────────────
+const CATEGORY_LABELS: Record<string, string> = {
+    absorption: "Absorption",
+    distribution: "Distribution",
+    metabolism: "Metabolism",
+    excretion: "Excretion",
+    toxicity: "Toxicity",
+    physchem: "Phys. Chem.",
+    other: "Other",
+};
+
 const BREAKDOWN_TIPS: Record<string, string> = {
     docking_affinity: "Max 50pts. Normalized from −4 (no binding) to −12 kcal/mol (exceptional). More negative affinity = more points.",
     admet_safety: "Max 20pts. 0 flags = full score. Each toxicity flag reduces the score. hERG cardiac risk applies an additional penalty.",
@@ -43,7 +85,40 @@ const BREAKDOWN_TIPS: Record<string, string> = {
 };
 
 
-// ── Affinity quality label ────────────────────────────────────────────────────
+// ── Style helpers ─────────────────────────────────────────────────────────────
+
+const getRiskStyle = (risk: OverallRisk) => {
+    switch (risk) {
+        case "high": return "bg-red-950/50 border-red-800 text-red-400";
+        case "moderate": return "bg-yellow-950/50 border-yellow-800 text-yellow-400";
+        default: return "bg-emerald-950/50 border-emerald-800 text-emerald-400";
+    }
+};
+
+const getNarrativeStyle = (level: ADMETNarrativeBlock["level"]) => {
+    switch (level) {
+        case "danger": return { wrap: "bg-red-950/30 border-red-900/60", title: "text-red-300", body: "text-red-200/70" };
+        case "warning": return { wrap: "bg-yellow-950/30 border-yellow-900/60", title: "text-yellow-300", body: "text-yellow-200/70" };
+        case "good": return { wrap: "bg-emerald-950/30 border-emerald-900/60", title: "text-emerald-300", body: "text-emerald-200/70" };
+        default: return { wrap: "bg-gray-800/50 border-gray-700", title: "text-gray-300", body: "text-gray-400" };
+    }
+};
+
+const getNarrativeIcon = (level: ADMETNarrativeBlock["level"]) => {
+    switch (level) {
+        case "danger": return <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 text-red-500 mt-0.5" />;
+        case "warning": return <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 text-yellow-500 mt-0.5" />;
+        case "good": return <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 text-emerald-500 mt-0.5" />;
+        default: return <Info className="w-3.5 h-3.5 flex-shrink-0 text-gray-500 mt-0.5" />;
+    }
+};
+
+const getEndpointStatusClass = (ep: ADMETEndpointValue) => {
+    if (!ep.triggered) return "text-emerald-400";
+    if (ep.severity === "high") return "text-red-400";
+    return "text-yellow-400";
+};
+
 const getAffinityLabel = (kcal: number): { label: string; color: string } => {
     if (kcal <= -9.0) return { label: "Outstanding", color: "text-emerald-300" };
     if (kcal <= -7.0) return { label: "Strong", color: "text-emerald-400" };
@@ -59,7 +134,20 @@ const getComplexityLabel = (score: number): { label: string; color: string } => 
 };
 
 
-// ── Structured ADMET flag card ────────────────────────────────────────────────
+// ── Tooltip ───────────────────────────────────────────────────────────────────
+
+const Tip = ({ text }: { text: string }) => (
+    <span className="group relative inline-flex items-center ml-1 cursor-help">
+        <Info className="w-3 h-3 text-gray-600 group-hover:text-gray-400 transition-colors" />
+        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-56 bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-2 text-xs text-gray-300 invisible group-hover:visible z-50 pointer-events-none leading-relaxed shadow-xl">
+            {text}
+        </span>
+    </span>
+);
+
+
+// ── ADMET Flag Card ───────────────────────────────────────────────────────────
+
 const ADMETFlagCard = ({ flag }: { flag: ADMETFlagDetail }) => {
     const [open, setOpen] = useState(false);
     const severityClasses = getFlagSeverityColor(flag.severity);
@@ -67,7 +155,7 @@ const ADMETFlagCard = ({ flag }: { flag: ADMETFlagDetail }) => {
     return (
         <div className={`rounded-lg border px-2.5 py-2 text-xs ${severityClasses}`}>
             <div
-                className="flex items-center justify-between gap-2 cursor-pointer"
+                className="flex items-center justify-between gap-2 cursor-pointer select-none"
                 onClick={() => setOpen(!open)}
             >
                 <div className="flex items-center gap-1.5 min-w-0">
@@ -102,7 +190,8 @@ const ADMETFlagCard = ({ flag }: { flag: ADMETFlagDetail }) => {
 };
 
 
-// ── Docking file download button ──────────────────────────────────────────────
+// ── Download Button ───────────────────────────────────────────────────────────
+
 interface DownloadBtnProps {
     label: string;
     fileType: DockingFileType;
@@ -113,7 +202,7 @@ interface DownloadBtnProps {
 
 const DownloadBtn = ({ label, fileType, tooltip, jobId, compoundIndex }: DownloadBtnProps) => {
     const [loading, setLoading] = useState(false);
-    const [error, setError]     = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
 
     const handleClick = async () => {
         setLoading(true);
@@ -123,7 +212,6 @@ const DownloadBtn = ({ label, fileType, tooltip, jobId, compoundIndex }: Downloa
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : "Download failed";
             setError(msg);
-            // Auto-clear the error after 5 s so the button isn't permanently broken
             setTimeout(() => setError(null), 5000);
         } finally {
             setLoading(false);
@@ -144,23 +232,16 @@ const DownloadBtn = ({ label, fileType, tooltip, jobId, compoundIndex }: Downloa
                     }
                     disabled:opacity-60 disabled:cursor-not-allowed
                 `}
-                title={tooltip}
             >
-                {loading
-                    ? <Loader2 className="w-3 h-3 animate-spin" />
-                    : <Download className="w-3 h-3" />
-                }
+                {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
                 <span>{label}</span>
             </button>
 
-            {/* Inline error tooltip */}
             {error && (
                 <div className="absolute bottom-full left-0 mb-1.5 w-64 bg-gray-900 border border-red-800 rounded-lg px-2.5 py-2 text-[11px] text-red-400 z-50 shadow-xl leading-relaxed">
                     {error}
                 </div>
             )}
-
-            {/* Hover tooltip (only shown when no error) */}
             {!error && (
                 <span className="absolute bottom-full left-0 mb-1.5 w-60 bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-2 text-xs text-gray-300 invisible group-hover:visible z-50 pointer-events-none leading-relaxed shadow-xl">
                     {tooltip}
@@ -171,7 +252,230 @@ const DownloadBtn = ({ label, fileType, tooltip, jobId, compoundIndex }: Downloa
 };
 
 
-// ── Main card component ───────────────────────────────────────────────────────
+// ── Narrative Block ───────────────────────────────────────────────────────────
+
+const NarrativeCard = ({ block }: { block: ADMETNarrativeBlock }) => {
+    const style = getNarrativeStyle(block.level);
+    return (
+        <div className={`rounded-lg border px-3 py-2.5 ${style.wrap}`}>
+            <div className="flex items-start gap-2">
+                {getNarrativeIcon(block.level)}
+                <div className="min-w-0">
+                    <p className={`text-xs font-semibold mb-0.5 ${style.title}`}>{block.title}</p>
+                    <p className={`text-xs leading-relaxed ${style.body}`}>{block.body}</p>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
+// ── Endpoint Table ────────────────────────────────────────────────────────────
+
+const EndpointTable = ({ endpoints }: { endpoints: ADMETEndpointValue[] }) => {
+    const [activeCategory, setActiveCategory] = useState<string>("all");
+
+    const presentCategories = useMemo(() => {
+        const cats = new Set(endpoints.map(e => e.category));
+        return ["all", ...CATEGORY_ORDER.filter(c => cats.has(c))];
+    }, [endpoints]);
+
+    const filtered = useMemo(
+        () => activeCategory === "all"
+            ? endpoints
+            : endpoints.filter(e => e.category === activeCategory),
+        [endpoints, activeCategory],
+    );
+
+    return (
+        <div>
+            {/* Category filter pills */}
+            <div className="flex flex-wrap gap-1.5 mb-3">
+                {presentCategories.map(cat => (
+                    <button
+                        key={cat}
+                        onClick={() => setActiveCategory(cat)}
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider border transition-colors ${activeCategory === cat
+                                ? "bg-gray-700 border-gray-500 text-gray-200"
+                                : "border-gray-700 text-gray-500 hover:border-gray-600 hover:text-gray-400"
+                            }`}
+                    >
+                        {cat === "all" ? "All" : CATEGORY_LABELS[cat]}
+                    </button>
+                ))}
+            </div>
+
+            {/* Table */}
+            <div className="overflow-x-auto rounded-lg border border-gray-700">
+                <table className="w-full text-xs">
+                    <thead>
+                        <tr className="border-b border-gray-700 bg-gray-800/80">
+                            <th className="text-left px-3 py-2 text-gray-500 font-medium uppercase tracking-wider">Endpoint</th>
+                            <th className="text-right px-3 py-2 text-gray-500 font-medium uppercase tracking-wider">Value</th>
+                            <th className="text-left px-3 py-2 text-gray-500 font-medium uppercase tracking-wider hidden sm:table-cell">Threshold</th>
+                            <th className="text-center px-3 py-2 text-gray-500 font-medium uppercase tracking-wider">Status</th>
+                            <th className="text-left px-3 py-2 text-gray-500 font-medium uppercase tracking-wider hidden md:table-cell">Category</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {filtered.map((ep, i) => (
+                            <tr
+                                key={ep.key}
+                                className={`border-b border-gray-800 last:border-0 transition-colors ${ep.triggered
+                                        ? ep.severity === "high"
+                                            ? "bg-red-950/20 hover:bg-red-950/30"
+                                            : "bg-yellow-950/10 hover:bg-yellow-950/20"
+                                        : "hover:bg-gray-800/40"
+                                    }`}
+                                title={ep.interpretation ?? ""}
+                            >
+                                <td className="px-3 py-2">
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="text-gray-300">{ep.label}</span>
+                                        {ep.hard_fail && (
+                                            <span className="text-[9px] uppercase tracking-wider text-red-500 border border-red-900 rounded px-1 py-0.5">hard fail</span>
+                                        )}
+                                        {ep.interpretation && (
+                                            <span className="group relative inline-flex items-center cursor-help">
+                                                <Info className="w-3 h-3 text-gray-700 group-hover:text-gray-500 transition-colors" />
+                                                <span className="absolute bottom-full left-0 mb-1.5 w-60 bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-2 text-xs text-gray-300 invisible group-hover:visible z-50 pointer-events-none leading-relaxed shadow-xl">
+                                                    {ep.interpretation}
+                                                </span>
+                                            </span>
+                                        )}
+                                    </div>
+                                </td>
+                                <td className="px-3 py-2 text-right font-mono">
+                                    <span className={getEndpointStatusClass(ep)}>
+                                        {ep.display_value}
+                                    </span>
+                                    {ep.unit && (
+                                        <span className="text-gray-600 ml-1 text-[10px]">{ep.unit}</span>
+                                    )}
+                                </td>
+                                <td className="px-3 py-2 text-gray-600 font-mono hidden sm:table-cell">
+                                    {ep.threshold_applied ?? "—"}
+                                </td>
+                                <td className="px-3 py-2 text-center">
+                                    {ep.threshold_applied
+                                        ? ep.triggered
+                                            ? <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${ep.severity === "high" ? "text-red-400" : "text-yellow-400"}`}>
+                                                <AlertTriangle className="w-3 h-3" />
+                                                {ep.severity}
+                                            </span>
+                                            : <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-400">
+                                                <CheckCircle2 className="w-3 h-3" />
+                                                pass
+                                            </span>
+                                        : <span className="text-gray-600 text-[10px]">—</span>
+                                    }
+                                </td>
+                                <td className="px-3 py-2 hidden md:table-cell">
+                                    <span className="text-[10px] uppercase tracking-wider text-gray-600 border border-gray-800 rounded px-1.5 py-0.5">
+                                        {CATEGORY_LABELS[ep.category] ?? ep.category}
+                                    </span>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+};
+
+
+// ── Full ADMET Report (narrative + endpoint table + decision basis) ─────────────
+
+interface FullADMETReportProps {
+    admet: ExtendedADMET;
+}
+
+const FullADMETReport = ({ admet }: FullADMETReportProps) => {
+    const [endpointTableOpen, setEndpointTableOpen] = useState(false);
+
+    const hasNarrative = (admet.narrative?.length ?? 0) > 0;
+    const hasEndpointTable = (admet.endpoint_table?.length ?? 0) > 0;
+    const hasDecisionBasis = (admet.decision_basis?.length ?? 0) > 0;
+
+    if (!hasNarrative && !hasEndpointTable) return null;
+
+    return (
+        <div className="rounded-lg bg-gray-800/30 border border-gray-700 overflow-hidden">
+            <div className="flex items-center gap-2 px-3 py-2.5 border-b border-gray-700 bg-gray-800/50">
+                <BookOpen className="w-3.5 h-3.5 text-gray-500" />
+                <p className="text-xs font-medium text-gray-300 uppercase tracking-wider">Full ADMET Report</p>
+                <span className="text-[10px] text-gray-600 ml-auto">Powered by ADMET-AI · 41 TDC datasets</span>
+            </div>
+
+            <div className="p-3 space-y-4">
+
+                {/* Narrative blocks */}
+                {hasNarrative && (
+                    <div className="space-y-2">
+                        {admet.narrative!.map((block, i) => (
+                            <NarrativeCard key={i} block={block} />
+                        ))}
+                    </div>
+                )}
+
+                {/* Endpoint table */}
+                {hasEndpointTable && (
+                    <div>
+                        <button
+                            onClick={() => setEndpointTableOpen(!endpointTableOpen)}
+                            className="w-full flex items-center justify-between gap-2 text-xs text-gray-400 hover:text-gray-300 transition-colors py-1"
+                        >
+                            <div className="flex items-center gap-1.5">
+                                <Layers className="w-3.5 h-3.5 text-gray-500" />
+                                <span className="font-medium uppercase tracking-wider">
+                                    Full Endpoint Table
+                                </span>
+                                <span className="text-gray-600">
+                                    ({admet.endpoint_table!.length} properties)
+                                </span>
+                            </div>
+                            {endpointTableOpen
+                                ? <ChevronUp className="w-3.5 h-3.5 text-gray-600" />
+                                : <ChevronDown className="w-3.5 h-3.5 text-gray-600" />
+                            }
+                        </button>
+
+                        {endpointTableOpen && (
+                            <div className="mt-2 animate-slide-up">
+                                <EndpointTable endpoints={admet.endpoint_table!} />
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Decision basis */}
+                {hasDecisionBasis && (
+                    <div>
+                        <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-1.5">Decision Basis</p>
+                        <ul className="space-y-0.5">
+                            {admet.decision_basis!.map((reason, i) => (
+                                <li key={i} className="flex items-start gap-1.5 text-xs text-gray-600">
+                                    <span className="mt-1.5 w-1 h-1 rounded-full bg-gray-700 flex-shrink-0" />
+                                    {reason}
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+
+// ── Main Card ─────────────────────────────────────────────────────────────────
+
+interface MoleculeCardProps {
+    compound: CompoundResult;
+    jobId: string;
+    index: number;
+}
 
 export default function MoleculeCard({ compound, jobId, index }: MoleculeCardProps) {
     const [expanded, setExpanded] = useState(false);
@@ -181,6 +485,9 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
 
     const score = compound.final_score ?? 0;
     const scoreColor = getScoreColor(score);
+
+    // Cast to extended type — new fields are optional so this is safe
+    const admet = compound.admet as ExtendedADMET | null | undefined;
 
     const copySmiles = () => {
         navigator.clipboard.writeText(compound.canonical_smiles);
@@ -205,12 +512,12 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
             score >= 45 ? "border-yellow-500 text-yellow-400" :
                 "border-red-600 text-red-400";
 
-    const flagCount = compound.admet?.flag_summary?.length ?? compound.admet?.flags?.length ?? 0;
+    const flagCount = admet?.flags?.length ?? admet?.flag_summary?.length ?? 0;
 
     return (
         <div className="card-hover animate-fade-in">
 
-            {/* ── Compact row ──────────────────────────────────────────────── */}
+            {/* ── Compact row ──────────────────────────────────────────── */}
             <div className="flex items-center gap-4">
 
                 {/* Rank + score ring */}
@@ -243,12 +550,19 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                 Lipinski {compound.lipinski.passed ? "✓" : "✗"}
                             </span>
                         )}
-                        {compound.admet && (
-                            <span className={compound.admet.passed ? "badge-pass" : "badge-warn"}>
+                        {admet && (
+                            <span className={admet.passed ? "badge-pass" : "badge-warn"}>
                                 ADMET {flagCount === 0
                                     ? "clean"
                                     : `${flagCount} flag${flagCount > 1 ? "s" : ""}`
                                 }
+                            </span>
+                        )}
+                        {/* Overall risk inline badge */}
+                        {admet?.overall_risk && admet.overall_risk !== "low" && (
+                            <span className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border ${getRiskStyle(admet.overall_risk)}`}>
+                                <Shield className="w-2.5 h-2.5" />
+                                {admet.overall_risk} risk
                             </span>
                         )}
                         {compound.docking && (
@@ -275,7 +589,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                 </button>
             </div>
 
-            {/* ── Expanded detail ───────────────────────────────────────────── */}
+            {/* ── Expanded detail ───────────────────────────────────────── */}
             {expanded && (
                 <div className="mt-4 pt-4 border-t border-gray-800 space-y-5 animate-slide-up">
 
@@ -289,7 +603,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
-                        {/* ── Drug-likeness ──────────────────────────────────── */}
+                        {/* ── Drug-likeness ──────────────────────────────── */}
                         {compound.lipinski && (
                             <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
                                 <div className="flex items-center gap-1.5 mb-2">
@@ -301,14 +615,12 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                     {[
                                         { label: "Mol. Weight", value: `${compound.lipinski.mw.toFixed(1)} Da`, ok: compound.lipinski.mw <= 350, tip: "Ideal: ≤350 Da. Heavier molecules struggle to cross cell membranes and absorb from the gut." },
                                         { label: "LogP", value: compound.lipinski.logp.toFixed(2), ok: compound.lipinski.logp <= 4.5, tip: "Ideal: ≤4.5. Measures fat-solubility. Too high = won't dissolve in blood; too low = won't cross membranes." },
-                                        { label: "H-bond donors", value: compound.lipinski.hbd, ok: compound.lipinski.hbd <= 5, tip: "Ideal: ≤5. H-bond donors are -OH and -NH groups. Too many prevent absorption through the gut lining." },
-                                        { label: "H-bond acceptors", value: compound.lipinski.hba, ok: compound.lipinski.hba <= 10, tip: "Ideal: ≤10. H-bond acceptors are N and O atoms. Too many reduce oral bioavailability." },
+                                        { label: "H-bond donors", value: compound.lipinski.hbd, ok: compound.lipinski.hbd <= 5, tip: "Ideal: ≤5. -OH and -NH groups. Too many prevent absorption through the gut lining." },
+                                        { label: "H-bond acceptors", value: compound.lipinski.hba, ok: compound.lipinski.hba <= 10, tip: "Ideal: ≤10. N and O atoms. Too many reduce oral bioavailability." },
                                         { label: "LogS (solubility)", value: compound.lipinski.logs.toFixed(2), ok: compound.lipinski.logs >= -4, tip: "Ideal: > −4. Measures water solubility (ESOL model). More negative = less soluble in blood/gut fluid." },
                                     ].map(({ label, value, ok, tip }) => (
                                         <div key={label} className="flex justify-between text-xs items-center">
-                                            <span className="text-gray-500 flex items-center">
-                                                {label}<Tip text={tip} />
-                                            </span>
+                                            <span className="text-gray-500 flex items-center">{label}<Tip text={tip} /></span>
                                             <span className={ok ? "text-emerald-400" : "text-yellow-400"}>{value}</span>
                                         </div>
                                     ))}
@@ -329,37 +641,47 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                             </div>
                         )}
 
-                        {/* ── ADMET ──────────────────────────────────────────── */}
-                        {compound.admet && (
+                        {/* ── ADMET compact panel ────────────────────────── */}
+                        {admet && (
                             <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
-                                <div className="flex items-center gap-1.5 mb-2">
-                                    <Activity className="w-3.5 h-3.5 text-gray-500" />
-                                    <p className="text-xs font-medium text-gray-300 uppercase tracking-wider">ADMET Profile</p>
-                                    <Tip text="Predicts how the drug is Absorbed, Distributed, Metabolized, Excreted, and whether it causes Toxicity. These are the main reasons drugs fail in clinical trials." />
+                                {/* Header row */}
+                                <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center gap-1.5">
+                                        <Activity className="w-3.5 h-3.5 text-gray-500" />
+                                        <p className="text-xs font-medium text-gray-300 uppercase tracking-wider">ADMET Profile</p>
+                                        <Tip text="Predicts how the drug is Absorbed, Distributed, Metabolized, Excreted, and whether it causes Toxicity. These are the main reasons drugs fail in clinical trials." />
+                                    </div>
+                                    {admet.overall_risk && (
+                                        <span className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border ${getRiskStyle(admet.overall_risk)}`}>
+                                            <Shield className="w-2.5 h-2.5" />
+                                            {admet.overall_risk}
+                                        </span>
+                                    )}
                                 </div>
+
+                                {/* Core 5 metrics */}
                                 <div className="space-y-1.5">
                                     {[
-                                        { label: "hERG inhibition", value: formatProbability(compound.admet.herg_inhibition), risk: compound.admet.herg_inhibition > 0.5, tip: "Ideal: <30%. Blocking the hERG channel causes fatal heart arrhythmia — the #1 reason drugs are withdrawn from markets." },
-                                        { label: "Hepatotoxicity", value: formatProbability(compound.admet.hepatotoxicity), risk: compound.admet.hepatotoxicity > 0.5, tip: "Ideal: <30%. Probability of liver cell damage. Liver toxicity is the #1 reason drugs fail FDA approval after Phase II trials." },
-                                        { label: "Oral bioavailability", value: formatProbability(compound.admet.oral_bioavailability), risk: compound.admet.oral_bioavailability < 0.3, tip: "Ideal: >70%. What percentage of the swallowed dose actually reaches the bloodstream. Low = drug mostly destroyed before reaching target." },
-                                        { label: "BBB penetration", value: formatProbability(compound.admet.bbb_penetration), risk: false, tip: "Blood-Brain Barrier penetration. Desirable for brain/CNS drugs, but a liability for non-CNS drugs (may cause neurological side effects)." },
-                                        { label: "Caco-2 permeability", value: compound.admet.caco2_permeability.toFixed(2), risk: compound.admet.caco2_permeability < -5.15, tip: "Ideal: > −5.15. Models how well the drug crosses intestinal wall cells (human colon cell line). Key predictor of oral absorption." },
+                                        { label: "hERG inhibition", value: formatProbability(admet.herg_inhibition), risk: admet.herg_inhibition > 0.5, tip: "Ideal: <30%. Blocking the hERG channel causes fatal heart arrhythmia — the #1 reason drugs are withdrawn from markets." },
+                                        { label: "Hepatotoxicity", value: formatProbability(admet.hepatotoxicity), risk: admet.hepatotoxicity > 0.5, tip: "Ideal: <30%. Probability of liver cell damage. Liver toxicity is the #1 reason drugs fail FDA approval after Phase II trials." },
+                                        { label: "Oral bioavailability", value: formatProbability(admet.oral_bioavailability), risk: admet.oral_bioavailability < 0.3, tip: "Ideal: >70%. What percentage of the swallowed dose actually reaches the bloodstream." },
+                                        { label: "BBB penetration", value: formatProbability(admet.bbb_penetration), risk: false, tip: "Blood-Brain Barrier penetration. Desirable for CNS drugs, but a liability for non-CNS drugs." },
+                                        { label: "Caco-2 permeability", value: admet.caco2_permeability.toFixed(2), risk: admet.caco2_permeability < -5.15, tip: "Ideal: > −5.15. Models how well the drug crosses intestinal wall cells. Key predictor of oral absorption." },
                                     ].map(({ label, value, risk, tip }) => (
                                         <div key={label} className="flex justify-between text-xs items-center">
-                                            <span className="text-gray-500 flex items-center">
-                                                {label}<Tip text={tip} />
-                                            </span>
+                                            <span className="text-gray-500 flex items-center">{label}<Tip text={tip} /></span>
                                             <span className={risk ? "text-red-400" : "text-emerald-400"}>{value}</span>
                                         </div>
                                     ))}
                                 </div>
 
-                                {compound.admet.flags.length > 0 && (
+                                {/* Flags */}
+                                {admet.flags.length > 0 && (
                                     <div className="mt-2 pt-2 border-t border-gray-700 space-y-1.5">
                                         <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-1">
                                             Flags — click to expand
                                         </p>
-                                        {compound.admet.flags.map((flag, i) => (
+                                        {admet.flags.map((flag, i) => (
                                             <ADMETFlagCard key={i} flag={flag} />
                                         ))}
                                     </div>
@@ -367,13 +689,13 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                             </div>
                         )}
 
-                        {/* ── Docking ────────────────────────────────────────── */}
+                        {/* ── Docking ────────────────────────────────────── */}
                         {compound.docking && (
                             <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
                                 <div className="flex items-center gap-1.5 mb-2">
                                     <Dna className="w-3.5 h-3.5 text-gray-500" />
                                     <p className="text-xs font-medium text-gray-300 uppercase tracking-wider">Vina Docking</p>
-                                    <Tip text="AutoDock Vina simulates the drug physically fitting into the target protein's active site. The affinity score is the estimated binding energy — more negative means stronger binding." />
+                                    <Tip text="AutoDock Vina simulates the drug physically fitting into the target protein's active site. More negative affinity means stronger binding." />
                                 </div>
                                 <div className="space-y-1.5">
                                     <div className="flex justify-between text-xs items-center">
@@ -411,7 +733,6 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                     </div>
                                 )}
 
-                                {/* ── Download section ───────────────────────── */}
                                 <div className="mt-3 pt-3 border-t border-gray-700">
                                     <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-2 flex items-center gap-1">
                                         <Download className="w-3 h-3" />
@@ -423,34 +744,34 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                             fileType="pdbqt"
                                             jobId={jobId}
                                             compoundIndex={index}
-                                            tooltip="All Vina poses — exact 3D coordinates as Vina produced them. Load in PyMOL or pass to PLIP manually."
+                                            tooltip="All Vina poses — exact 3D coordinates. Load in PyMOL or pass to PLIP manually."
                                         />
                                         <DownloadBtn
                                             label="Pose 1 + H (.pdb)"
                                             fileType="pose_pdb"
                                             jobId={jobId}
                                             compoundIndex={index}
-                                            tooltip="Best pose only, hydrogens added via obabel. Ready for PLIP protein–ligand interaction analysis or PyMOL visualisation."
+                                            tooltip="Best pose only, hydrogens added via obabel. Ready for PLIP or PyMOL."
                                         />
                                         <DownloadBtn
                                             label="PLIP Complex (.pdb)"
                                             fileType="complex_pdb"
                                             jobId={jobId}
                                             compoundIndex={index}
-                                            tooltip="Receptor (protein ATOM records) + docked ligand (HETATM) merged into one file. Drop directly into PLIP or PyMOL — no manual merging needed."
+                                            tooltip="Receptor + docked ligand merged. Drop directly into PLIP or PyMOL — no manual merging needed."
                                         />
                                     </div>
                                 </div>
                             </div>
                         )}
 
-                        {/* ── Retrosynthesis ─────────────────────────────────── */}
+                        {/* ── Retrosynthesis ─────────────────────────────── */}
                         {compound.retrosynthesis && (
                             <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
                                 <div className="flex items-center gap-1.5 mb-2">
                                     <GitBranch className="w-3.5 h-3.5 text-gray-500" />
                                     <p className="text-xs font-medium text-gray-300 uppercase tracking-wider">Retrosynthesis</p>
-                                    <Tip text="Analyses whether this molecule can be synthesized in a chemistry lab, and how many steps it would take. Fewer steps and lower complexity = cheaper and faster to make." />
+                                    <Tip text="Analyses whether this molecule can be synthesized in a chemistry lab, and how many steps it would take." />
                                 </div>
                                 {compound.retrosynthesis.feasible ? (
                                     <div className="space-y-1.5">
@@ -461,7 +782,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                         <div className="flex justify-between text-xs items-center">
                                             <span className="text-gray-500 flex items-center">
                                                 Complexity score
-                                                <Tip text="SA Score: < 15 = Very Easy · 15–25 = Moderate · 25–40 = Difficult · > 40 = Practically infeasible. Most approved oral drugs score under 25." />
+                                                <Tip text="SA Score: < 15 = Very Easy · 15–25 = Moderate · 25–40 = Difficult · > 40 = Practically infeasible." />
                                             </span>
                                             <div className="flex items-center gap-2">
                                                 <span className={getComplexityLabel(compound.retrosynthesis.complexity_score).color}>
@@ -494,7 +815,12 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                         )}
                     </div>
 
-                    {/* ── Score breakdown ──────────────────────────────────────── */}
+                    {/* ── Full ADMET report (narrative + endpoint table) ────── */}
+                    {admet && (
+                        <FullADMETReport admet={admet} />
+                    )}
+
+                    {/* ── Score breakdown ────────────────────────────────────── */}
                     {breakdownLoading && (
                         <div className="flex items-center gap-2 text-xs text-gray-600">
                             <div className="w-3 h-3 border border-gray-600 border-t-gray-400 rounded-full animate-spin" />
@@ -525,8 +851,8 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                                 <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
                                                     <div
                                                         className={`h-full rounded-full transition-all ${pct >= 70 ? "bg-emerald-600" :
-                                                            pct >= 40 ? "bg-yellow-600" :
-                                                                "bg-red-700"
+                                                                pct >= 40 ? "bg-yellow-600" :
+                                                                    "bg-red-700"
                                                             }`}
                                                         style={{ width: `${pct}%` }}
                                                     />
@@ -537,7 +863,9 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                     })}
                             </div>
                             {breakdown.mw_fragment_penalty === true && (
-                                <p className="text-xs text-yellow-500 mt-2">⚠ Fragment penalty applied (MW &lt; 200 Da) — score halved.</p>
+                                <p className="text-xs text-yellow-500 mt-2">
+                                    ⚠ Fragment penalty applied (MW &lt; 200 Da) — score halved.
+                                </p>
                             )}
                         </div>
                     )}

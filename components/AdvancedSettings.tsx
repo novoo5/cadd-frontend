@@ -1,10 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import {
-    ChevronDown, ChevronUp, Info, Zap, FlaskConical,
-    CheckCircle2, Lock, X, Clock,
-} from "lucide-react";
+import { ChevronDown, ChevronUp, Info, Zap, FlaskConical, CheckCircle2, Lock, X, Clock, ShieldAlert } from "lucide-react";
 import type {
     PipelineSteps,
     DockingSpeed,
@@ -12,92 +9,55 @@ import type {
     BindingSiteCoords,
     BindingSiteResidues,
     SolubilityFilterMode,
+    ADMETTuningConfig,
+    ADMETPreset,
 } from "@/lib/api";
-
+import { ADMET_PRESET_DEFAULTS } from "@/lib/api";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
-
 interface AdvancedSettingsProps {
     numAnalogues: number;
     onNumAnaloguesChange: (v: number) => void;
-
     pipelineSteps: PipelineSteps;
     onPipelineStepsChange: (v: PipelineSteps) => void;
-
     dockingSpeed: DockingSpeed;
     onDockingSpeedChange: (v: DockingSpeed) => void;
-
-    // ── NEW ──────────────────────────────────────────────────────────────────
     maxDockingCompounds: number;
     onMaxDockingCompoundsChange: (v: number) => void;
-    // ────────────────────────────────────────────────────────────────────────
-
     bindingSiteMode: BindingSiteMode;
     onBindingSiteModeChange: (v: BindingSiteMode) => void;
-
     bindingSiteCoords: BindingSiteCoords;
     onBindingSiteCoordsChange: (v: BindingSiteCoords) => void;
-
     bindingSiteResidues: BindingSiteResidues;
     onBindingSiteResiduesChange: (v: BindingSiteResidues) => void;
-
     directScoreOnly: boolean;
     onDirectScoreOnlyChange: (v: boolean) => void;
-
     mwMin: number;
     mwMax: number;
     onMwMinChange: (v: number) => void;
     onMwMaxChange: (v: number) => void;
-
     maxLipinskiViolations: number | null;
     onMaxLipinskiViolationsChange: (v: number | null) => void;
-
     solubilityFilter: SolubilityFilterMode;
     onSolubilityFilterChange: (v: SolubilityFilterMode) => void;
-
     toxicityReportOnly: boolean;
     onToxicityReportOnlyChange: (v: boolean) => void;
-
     lockedScaffoldSmarts: string;
     onLockedScaffoldSmartsChange: (v: string) => void;
+    // ← NEW ADMET Config
+    admetConfig: ADMETTuningConfig;
+    onAdmetConfigChange: (v: ADMETTuningConfig) => void;
 }
-
 
 // ── Static config ─────────────────────────────────────────────────────────────
 
-const STEPS: {
-    key: keyof PipelineSteps;
-    label: string;
-    desc: string;
-    locked?: boolean;
-}[] = [
-        {
-            key: "drug_likeness",
-            label: "Drug-likeness Filter",
-            desc: "Lipinski RO5 + ESOL solubility (RDKit)",
-            locked: true,
-        },
-        {
-            key: "admet",
-            label: "ADMET Toxicity Filter",
-            desc: "hERG, hepatotox, Caco-2, bioavailability (ADMET-AI) — flags include severity, implication & redesign tip",
-        },
-        {
-            key: "binding_prefilter",
-            label: "ML Binding Pre-filter",
-            desc: "GNN affinity ranking — ranks all surviving compounds, sends the top N for docking (DeepChem AttentiveFP). N is controlled by the 'Max Compounds to Dock' setting below.",
-        },
-        {
-            key: "docking",
-            label: "Molecular Docking",
-            desc: "AutoDock Vina with CNN rescoring (heavy compute)",
-        },
-        {
-            key: "retrosynthesis",
-            label: "Retrosynthesis",
-            desc: "SA Score feasibility + AiZynthFinder route planning",
-        },
-    ];
+const STEPS: { key: keyof PipelineSteps; label: string; desc: string; locked?: boolean }[] = [
+    { key: "drug_likeness", label: "Drug-likeness Filter", desc: "Lipinski RO5 + ESOL solubility (RDKit)", locked: true },
+    { key: "admet", label: "ADMET Toxicity Filter", desc: "hERG, hepatotox, Caco-2, bioavailability (ADMET-AI). flags include severity, implication & redesign tip" },
+    { key: "binding_prefilter", label: "ML Binding Pre-filter", desc: "GNN affinity ranking ranks all surviving compounds, sends the top N for docking (DeepChem AttentiveFP). N is controlled by the 'Max Compounds to Dock' setting below." },
+    { key: "docking", label: "Molecular Docking", desc: "AutoDock Vina with CNN rescoring (heavy compute)" },
+    { key: "retrosynthesis", label: "Retrosynthesis", desc: "SA Score + feasibility (AiZynthFinder route planning)" },
+];
 
 const DOCKING_SPEEDS: { value: DockingSpeed; label: string; desc: string; minPerCompound: number }[] = [
     { value: "fast", label: "Fast", desc: "exhaustiveness=8, ~5 min/compound", minPerCompound: 5 },
@@ -105,81 +65,39 @@ const DOCKING_SPEEDS: { value: DockingSpeed; label: string; desc: string; minPer
     { value: "thorough", label: "Thorough", desc: "exhaustiveness=32, ~20 min/compound", minPerCompound: 20 },
 ];
 
-// Preset compound counts for docking
 const DOCKING_COUNT_PRESETS = [10, 25, 50] as const;
 
 const VIOLATION_OPTIONS: { value: string; label: string }[] = [
-    { value: "1", label: "Strict — ≤1 violation (classic RO5)" },
-    { value: "2", label: "Relaxed — ≤2 violations" },
-    { value: "3", label: "Lenient — ≤3 violations" },
+    { value: "1", label: "Strict (≤1 violation, classic RO5)" },
+    { value: "2", label: "Relaxed (≤2 violations)" },
+    { value: "3", label: "Lenient (≤3 violations)" },
     { value: "null", label: "Ignore completely (no filter)" },
 ];
 
-const SOLUBILITY_OPTIONS: {
-    value: SolubilityFilterMode;
-    label: string;
-    desc: string;
-    badge: string;
-}[] = [
-        {
-            value: "soluble_only",
-            label: "Soluble only",
-            desc: "logS > −3 — highly soluble + soluble (aqueous assay-ready)",
-            badge: "🟢",
-        },
-        {
-            value: "allow_slightly",
-            label: "Include slightly soluble",
-            desc: "logS > −5 — adds slightly soluble (may need formulation aid)",
-            badge: "🟡",
-        },
-        {
-            value: "all",
-            label: "All (no filter)",
-            desc: "No solubility restriction — default behaviour",
-            badge: "⚪",
-        },
-    ];
+const SOLUBILITY_OPTIONS: { value: SolubilityFilterMode; label: string; desc: string; badge: string }[] = [
+    { value: "soluble_only", label: "Soluble only", desc: "logS > -3: highly soluble / aqueous assay-ready", badge: "🟢" },
+    { value: "allow_slightly", label: "Include slightly soluble", desc: "logS > -5: adds slightly soluble (may need formulation aid)", badge: "🟡" },
+    { value: "all", label: "All (no filter)", desc: "No solubility restriction (default behaviour)", badge: "⚪" },
+];
 
-const SCAFFOLD_PRESETS: { label: string; smarts: string; hint: string }[] = [
-    {
-        label: "Quinolone (fluoroquinolones)",
-        smarts: "c1ccc2c(c1)C(=O)c1ccccc1N2",
-        hint: "Locks the bicyclic quinolone ring — preserves antibiotic pharmacophore",
-    },
-    {
-        label: "Benzimidazole",
-        smarts: "c1ccc2[nH]cnc2c1",
-        hint: "Locks the fused benzimidazole core",
-    },
-    {
-        label: "Flavone / Quercetin core",
-        smarts: "O=c1cc(-c2ccccc2)oc2ccccc12",
-        hint: "Locks the 2-phenyl-4H-chromen-4-one scaffold",
-    },
-    {
-        label: "Purine (kinase hinge)",
-        smarts: "c1nc2[nH]cnc2n1",
-        hint: "Locks adenine-like purine scaffold for kinase binding",
-    },
-    {
-        label: "Indole",
-        smarts: "c1ccc2[nH]ccc2c1",
-        hint: "Locks the bicyclic indole ring system",
-    },
+const SCAFFOLD_PRESETS = [
+    { label: "Quinolone (fluoroquinolones)", smarts: "c1ccc2cc1C(=O)c1ccccc1N2", hint: "Locks the bicyclic quinolone ring (preserves antibiotic pharmacophore)" },
+    { label: "Benzimidazole", smarts: "c1ccc2nHcnc2c1", hint: "Locks the fused benzimidazole core" },
+    { label: "Flavone (Quercetin core)", smarts: "O=c1cc(-c2ccccc2)oc2ccccc12", hint: "Locks the 2-phenyl-4H-chromen-4-one scaffold" },
+    { label: "Purine (kinase hinge)", smarts: "c1nc2nHcnc2n1", hint: "Locks adenine-like purine scaffold (for kinase binding)" },
+    { label: "Indole", smarts: "c1ccc2nHccc2c1", hint: "Locks the bicyclic indole ring system" },
 ];
 
 const ANALOGUE_PRESETS = [25, 50, 100, 500, 1000] as const;
-
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatDockingTime(compounds: number, minPerCompound: number): string {
     const total = compounds * minPerCompound;
-    if (total < 60) return `~${total} min`;
+    if (total < 60) return `${total} min`;
     const h = Math.floor(total / 60);
     const m = total % 60;
-    return m === 0 ? `~${h}h` : `~${h}h ${m}m`;
+    return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
 function dockingTimeSeverity(compounds: number, minPerCompound: number): "ok" | "warn" | "heavy" {
@@ -188,7 +106,6 @@ function dockingTimeSeverity(compounds: number, minPerCompound: number): "ok" | 
     if (total <= 300) return "warn";
     return "heavy";
 }
-
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -221,6 +138,8 @@ export default function AdvancedSettings({
     onToxicityReportOnlyChange,
     lockedScaffoldSmarts,
     onLockedScaffoldSmartsChange,
+    admetConfig,
+    onAdmetConfigChange,
 }: AdvancedSettingsProps) {
     const [open, setOpen] = useState(false);
     const [scaffoldPresetOpen, setScaffoldPresetOpen] = useState(false);
@@ -234,11 +153,37 @@ export default function AdvancedSettings({
         onPipelineStepsChange({ ...pipelineSteps, [key]: !pipelineSteps[key] });
     };
 
-    const violationSelectValue =
-        maxLipinskiViolations === null ? "null" : String(maxLipinskiViolations);
-
+    const violationSelectValue = maxLipinskiViolations === null ? "null" : String(maxLipinskiViolations);
     const handleViolationChange = (raw: string) => {
         onMaxLipinskiViolationsChange(raw === "null" ? null : parseInt(raw, 10));
+    };
+
+    // ── ADMET Handlers ──────────────────────────────────────────────────────────
+
+    const handleAdmetPresetChange = (preset: ADMETPreset) => {
+        const defaults = ADMET_PRESET_DEFAULTS[preset];
+        // Merge the selected preset's defaults into the current config, preserving any fields the preset doesn't touch.
+        onAdmetConfigChange({
+            ...admetConfig,
+            ...defaults,
+            preset: preset,
+        });
+    };
+
+    const handleAdmetThresholdChange = (
+        endpoint: "herg_inhibition" | "hepatotoxicity",
+        field: "cutoff" | "severity_high",
+        value: number
+    ) => {
+        const currentEndpoint = admetConfig[endpoint] || ADMET_PRESET_DEFAULTS.balanced![endpoint]!;
+        onAdmetConfigChange({
+            ...admetConfig,
+            preset: "custom", // Switch to custom if they manually drag a slider
+            [endpoint]: {
+                ...currentEndpoint,
+                [field]: value,
+            },
+        });
     };
 
     const analoguesDisabled = directScoreOnly;
@@ -247,21 +192,18 @@ export default function AdvancedSettings({
     const activeSpeed = DOCKING_SPEEDS.find((s) => s.value === dockingSpeed)!;
     const dockingTimeStr = formatDockingTime(maxDockingCompounds, activeSpeed.minPerCompound);
     const dockingTimeSev = dockingTimeSeverity(maxDockingCompounds, activeSpeed.minPerCompound);
-
-    // Whether user typed a value not in presets
     const isCustomCount = !DOCKING_COUNT_PRESETS.includes(maxDockingCompounds as typeof DOCKING_COUNT_PRESETS[number]);
 
     return (
         <div className="card mt-4">
-            {/* ── Header toggle ───────────────────────────────────────────── */}
+            {/* Header / toggle button */}
             <button
                 type="button"
                 onClick={() => setOpen(!open)}
                 className="w-full flex items-center justify-between text-sm font-medium text-gray-300 hover:text-gray-100 transition-colors"
             >
                 <span className="flex items-center gap-2">
-                    <span className="text-gray-500">⚙</span>
-                    Advanced Settings
+                    <span className="text-gray-500">⚙</span> Advanced Settings
                     {directScoreOnly && (
                         <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-violet-900/50 border border-violet-700 text-violet-300">
                             <Zap className="w-2.5 h-2.5" /> Direct Score
@@ -282,681 +224,465 @@ export default function AdvancedSettings({
                             Top {maxDockingCompounds} docked
                         </span>
                     )}
+                    {admetConfig.preset !== "balanced" && (
+                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-900/50 border border-emerald-700 text-emerald-300">
+                            <ShieldAlert className="w-2.5 h-2.5" /> {admetConfig.preset} ADMET
+                        </span>
+                    )}
                 </span>
-                {open
-                    ? <ChevronUp className="w-4 h-4 text-gray-500" />
-                    : <ChevronDown className="w-4 h-4 text-gray-500" />
-                }
+                {open ? <ChevronUp className="w-4 h-4 text-gray-500" /> : <ChevronDown className="w-4 h-4 text-gray-500" />}
             </button>
 
             {open && (
-                <div className="mt-5 space-y-6 animate-slide-up">
+                <div className="mt-6 space-y-8 animate-in fade-in slide-in-from-top-2 duration-200">
 
-                    {/* ── 1. Toxicity Report Only ──────────────────────────── */}
-                    <div className={`p-3 rounded-xl border transition-all ${toxicityReportOnly
-                        ? "bg-red-950/30 border-red-700"
-                        : "bg-gray-800/30 border-gray-800"
-                        }`}>
-                        <div className="flex items-center justify-between gap-3">
-                            <div className="flex items-start gap-2">
-                                <FlaskConical className={`w-4 h-4 mt-0.5 flex-shrink-0 ${toxicityReportOnly ? "text-red-400" : "text-gray-500"
-                                    }`} />
-                                <div>
-                                    <p className="text-sm font-medium text-gray-200">
-                                        Toxicity Report
-                                    </p>
-                                    <p className="text-xs text-gray-500 mt-0.5">
-                                        Forces ADMET on regardless of other settings.
-                                        When used alone: skips docking/retrosynthesis, no PDB needed.
-                                        When combined with Direct Score: runs the full pipeline on your
-                                        compound with ADMET guaranteed — PDB still required.
-                                    </p>
-                                </div>
+                    {/* Mode Overrides */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <label className="flex items-start gap-3 p-3 rounded-lg border border-gray-800 bg-gray-900/30 cursor-pointer hover:bg-gray-800/50 transition-colors">
+                            <div className="flex items-center h-5">
+                                <input
+                                    type="checkbox"
+                                    checked={directScoreOnly}
+                                    onChange={(e) => onDirectScoreOnlyChange(e.target.checked)}
+                                    className="w-4 h-4 rounded border-gray-700 bg-gray-800 text-primary focus:ring-primary focus:ring-offset-gray-900"
+                                />
                             </div>
-                            <button
-                                type="button"
-                                onClick={() => onToxicityReportOnlyChange(!toxicityReportOnly)}
-                                className={`w-9 h-5 rounded-full relative transition-colors flex-shrink-0 ${toxicityReportOnly ? "bg-red-600" : "bg-gray-700"
-                                    }`}
-                            >
-                                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${toxicityReportOnly ? "translate-x-[1.125rem]" : "translate-x-0"
-                                    }`} />
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* ── 2. Direct Score Mode ─────────────────────────────── */}
-                    <div className={`p-3 rounded-xl border transition-all ${directScoreOnly
-                        ? "bg-violet-950/30 border-violet-700"
-                        : "bg-gray-800/30 border-gray-800"
-                        }`}>
-                        <div className="flex items-center justify-between gap-3">
-                            <div className="flex items-start gap-2">
-                                <Zap className={`w-4 h-4 mt-0.5 flex-shrink-0 ${directScoreOnly ? "text-violet-400" : "text-gray-500"
-                                    }`} />
-                                <div>
-                                    <p className="text-sm font-medium text-gray-200">
-                                        Direct Score Mode
-                                    </p>
-                                    <p className="text-xs text-gray-500 mt-0.5">
-                                        Skip analogue generation — score your input SMILES directly
-                                        through the full pipeline. Combine with Toxicity Report to
-                                        guarantee ADMET runs. Ideal for benchmarking known compounds.
-                                    </p>
-                                </div>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={() => onDirectScoreOnlyChange(!directScoreOnly)}
-                                className={`w-9 h-5 rounded-full relative transition-colors flex-shrink-0 ${directScoreOnly ? "bg-violet-600" : "bg-gray-700"
-                                    }`}
-                            >
-                                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${directScoreOnly ? "translate-x-[1.125rem]" : "translate-x-0"
-                                    }`} />
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* ── 3. Number of analogues ───────────────────────────── */}
-                    <div className={analoguesDisabled ? "opacity-40 pointer-events-none" : ""}>
-                        <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
-                            Analogues to Generate
-                            {analoguesDisabled && (
-                                <span className="ml-2 normal-case text-violet-400 font-normal">
-                                    disabled in direct score mode
+                            <div className="flex flex-col">
+                                <span className="text-sm font-medium text-gray-200 flex items-center gap-1">
+                                    <Zap className="w-3.5 h-3.5 text-violet-400" /> Direct Score Only
                                 </span>
-                            )}
+                                <span className="text-xs text-gray-500 mt-1">
+                                    Skip analogue generation. Runs the base compound straight through the pipeline.
+                                </span>
+                            </div>
                         </label>
-                        <div className="flex gap-2 mb-2">
-                            {ANALOGUE_PRESETS.map((n) => (
-                                <button
-                                    key={n}
-                                    type="button"
-                                    onClick={() => onNumAnaloguesChange(n)}
-                                    className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-all ${numAnalogues === n
-                                        ? "bg-emerald-900/50 border-emerald-600 text-emerald-300"
-                                        : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
-                                        }`}
-                                >
-                                    {n}
-                                </button>
-                            ))}
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-500 flex-shrink-0">
-                                Custom (1–10000):
-                            </span>
-                            <input
-                                type="number"
-                                min={1}
-                                max={10000}
-                                value={numAnalogues}
-                                onChange={(e) => {
-                                    const v = Math.max(1, Math.min(10000, parseInt(e.target.value) || 25));
-                                    onNumAnaloguesChange(v);
-                                }}
-                                className="w-24 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-emerald-600"
-                            />
-                            {numAnalogues >= 5000 && (
-                                <span className="text-[10px] text-red-400">
-                                    ⚠ Very large run — chemical space may saturate before {numAnalogues}
+
+                        <label className="flex items-start gap-3 p-3 rounded-lg border border-gray-800 bg-gray-900/30 cursor-pointer hover:bg-gray-800/50 transition-colors">
+                            <div className="flex items-center h-5">
+                                <input
+                                    type="checkbox"
+                                    checked={toxicityReportOnly}
+                                    onChange={(e) => onToxicityReportOnlyChange(e.target.checked)}
+                                    className="w-4 h-4 rounded border-gray-700 bg-gray-800 text-primary focus:ring-primary focus:ring-offset-gray-900"
+                                />
+                            </div>
+                            <div className="flex flex-col">
+                                <span className="text-sm font-medium text-gray-200 flex items-center gap-1">
+                                    <FlaskConical className="w-3.5 h-3.5 text-red-400" /> Toxicity Report Only
                                 </span>
-                            )}
-                            {numAnalogues >= 1000 && numAnalogues < 5000 && (
-                                <span className="text-[10px] text-yellow-500">
-                                    ⚠ Large run — may take 30–90 min
+                                <span className="text-xs text-gray-500 mt-1">
+                                    Forces ADMET on all compounds and skips PDB/docking entirely. Fast profiling.
                                 </span>
-                            )}
-                        </div>
-                        <p className="mt-1.5 text-xs text-gray-600">
-                            Uses 5-strategy exhaustive mutation (BRICS, FG swaps, substituent
-                            additions, atom mutations, chain edits) with 2nd-order mutations from
-                            accepted analogues. Reliably fills the requested count up to ~3000;
-                            beyond that chemical space may saturate.
-                        </p>
+                            </div>
+                        </label>
                     </div>
 
-                    {/* ── 4. Solubility filter ─────────────────────────────── */}
-                    {!analoguesDisabled && (
-                        <div>
-                            <label className="block text-xs font-medium text-gray-400 mb-1 uppercase tracking-wider">
-                                Solubility Filter{" "}
-                                <span className="normal-case font-normal text-gray-600">
-                                    (applied during generation)
-                                </span>
-                            </label>
-                            <p className="text-xs text-gray-500 mb-2">
-                                Uses the Delaney ESOL model to pre-screen analogues before they
-                                enter the pipeline. Filters out insoluble compounds at source.
-                            </p>
-                            <div className="space-y-1.5">
-                                {SOLUBILITY_OPTIONS.map(({ value, label, desc, badge }) => (
-                                    <button
-                                        key={value}
-                                        type="button"
-                                        onClick={() => onSolubilityFilterChange(value)}
-                                        className={`w-full flex items-start gap-3 p-3 rounded-lg border text-left transition-all ${solubilityFilter === value
-                                            ? "bg-emerald-950/30 border-emerald-700"
-                                            : "bg-gray-800/30 border-gray-800 hover:border-gray-700"
-                                            }`}
-                                    >
-                                        <span className="mt-0.5 text-sm flex-shrink-0">{badge}</span>
-                                        <div className="flex-1 min-w-0">
-                                            <p className={`text-sm font-medium ${solubilityFilter === value ? "text-emerald-300" : "text-gray-300"
-                                                }`}>
-                                                {label}
-                                            </p>
-                                            <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
-                                        </div>
-                                        {solubilityFilter === value && (
-                                            <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0" />
-                                        )}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    )}
+                    <div className="h-px bg-gray-800/50" />
 
-                    {/* ── 5. Pipeline steps ────────────────────────────────── */}
-                    <div>
-                        <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
-                            Pipeline Steps
-                        </label>
-                        <div className="space-y-2">
-                            {STEPS.map(({ key, label, desc, locked }) => {
-                                const forceSkipped =
-                                    toxOnly &&
-                                    key !== "admet" &&
-                                    key !== "drug_likeness";
-
-                                const forcedOn = toxicityReportOnly && key === "admet";
-
-                                return (
-                                    <div
-                                        key={key}
-                                        className={`flex items-start gap-3 p-3 rounded-lg border transition-all ${forceSkipped
-                                            ? "opacity-40 bg-gray-900/20 border-gray-800"
-                                            : pipelineSteps[key]
-                                                ? "bg-emerald-950/30 border-emerald-900"
-                                                : "bg-gray-800/30 border-gray-800"
-                                            }`}
-                                    >
+                    {/* Analogue Generation & Scaffold */}
+                    <div className={`space-y-4 ${analoguesDisabled ? "opacity-50 pointer-events-none" : ""}`}>
+                        <h3 className="text-sm font-medium text-gray-200 flex items-center gap-2">
+                            Analogue Generation
+                            {analoguesDisabled && <span className="text-xs text-violet-400 font-normal ml-2">(Disabled by Direct Score mode)</span>}
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="space-y-3">
+                                <label className="text-xs text-gray-400">Number of Analogues (Max 1000)</label>
+                                <div className="flex flex-wrap gap-2">
+                                    {ANALOGUE_PRESETS.map((val) => (
                                         <button
+                                            key={val}
                                             type="button"
-                                            onClick={() => toggleStep(key)}
-                                            disabled={locked || forceSkipped || forcedOn}
-                                            className={`mt-0.5 w-9 h-5 rounded-full relative transition-colors flex-shrink-0 ${pipelineSteps[key] && !forceSkipped
-                                                ? "bg-emerald-600"
-                                                : "bg-gray-700"
-                                                } ${locked || forceSkipped || forcedOn
-                                                    ? "opacity-50 cursor-not-allowed"
-                                                    : "cursor-pointer"
+                                            onClick={() => onNumAnaloguesChange(val)}
+                                            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${numAnalogues === val ? "bg-primary text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
                                                 }`}
                                         >
-                                            <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${pipelineSteps[key] && !forceSkipped
-                                                ? "translate-x-[1.125rem]"
-                                                : "translate-x-0"
-                                                }`} />
+                                            {val}
                                         </button>
+                                    ))}
+                                    <div className="relative flex-1 min-w-[100px]">
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            max={1000}
+                                            value={numAnalogues}
+                                            onChange={(e) => onNumAnaloguesChange(parseInt(e.target.value) || 25)}
+                                            className="w-full h-full min-h-[32px] px-3 rounded bg-gray-800 border-none text-xs text-gray-200 focus:ring-1 focus:ring-primary placeholder:text-gray-600"
+                                            placeholder="Custom..."
+                                        />
+                                    </div>
+                                </div>
+                            </div>
 
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2 flex-wrap">
-                                                <span className="text-sm text-gray-200">{label}</span>
-                                                {locked && (
-                                                    <span className="badge-neutral text-[10px]">
-                                                        always on
-                                                    </span>
-                                                )}
-                                                {forcedOn && (
-                                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-900/40 border border-red-800 text-red-400">
-                                                        forced on — toxicity report
-                                                    </span>
-                                                )}
-                                                {forceSkipped && (
-                                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-800 border border-gray-700 text-gray-500">
-                                                        skipped in tox-only mode
-                                                    </span>
-                                                )}
+                            <div className="space-y-3">
+                                <label className="text-xs text-gray-400 flex items-center justify-between">
+                                    Lock Core Scaffold (SMARTS)
+                                    {lockedScaffoldSmarts && (
+                                        <button onClick={() => onLockedScaffoldSmartsChange("")} className="text-gray-500 hover:text-red-400">
+                                            <X className="w-3.5 h-3.5" />
+                                        </button>
+                                    )}
+                                </label>
+                                <input
+                                    type="text"
+                                    value={lockedScaffoldSmarts}
+                                    onChange={(e) => onLockedScaffoldSmartsChange(e.target.value)}
+                                    placeholder="e.g. c1ccc2cc1C(=O)c1ccccc1N2"
+                                    className="input font-mono text-xs w-full"
+                                />
+                                <div className="relative">
+                                    <button
+                                        type="button"
+                                        onClick={() => setScaffoldPresetOpen(!scaffoldPresetOpen)}
+                                        className="text-[11px] text-primary hover:text-primary-hover flex items-center gap-1"
+                                    >
+                                        Select common scaffold pattern <ChevronDown className="w-3 h-3" />
+                                    </button>
+                                    {scaffoldPresetOpen && (
+                                        <div className="absolute top-full left-0 mt-2 w-full max-w-md bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-10 overflow-hidden">
+                                            <div className="p-2 space-y-1">
+                                                {SCAFFOLD_PRESETS.map((p) => (
+                                                    <button
+                                                        key={p.label}
+                                                        type="button"
+                                                        onClick={() => { onLockedScaffoldSmartsChange(p.smarts); setScaffoldPresetOpen(false); }}
+                                                        className="w-full text-left p-2 rounded hover:bg-gray-700 group transition-colors"
+                                                    >
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-xs font-medium text-gray-200">{p.label}</span>
+                                                            <span className="text-[10px] font-mono text-gray-500 group-hover:text-primary transition-colors">{p.smarts}</span>
+                                                        </div>
+                                                        <div className="text-[10px] text-gray-500 mt-1">{p.hint}</div>
+                                                    </button>
+                                                ))}
                                             </div>
-                                            <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
 
-                                            {key === "admet" && pipelineSteps.admet && (
-                                                <div className="mt-2 p-2 rounded-lg bg-gray-900/60 border border-gray-800">
-                                                    <p className="text-[10px] text-gray-500 font-medium uppercase tracking-wider mb-1">
-                                                        Each flag reports
-                                                    </p>
-                                                    <div className="space-y-0.5">
-                                                        {[
-                                                            { prop: "hERG Inhibition", thresh: ">0.50", risk: "cardiac arrhythmia" },
-                                                            { prop: "Hepatotoxicity", thresh: ">0.50", risk: "liver toxicity (DILI)" },
-                                                            { prop: "Caco-2 Permeability", thresh: "<−5.15 log", risk: "poor oral absorption" },
-                                                            { prop: "Oral Bioavailability", thresh: "<0.30", risk: "poor systemic exposure" },
-                                                            { prop: "BBB Penetration", thresh: "<0.30", risk: "limited CNS exposure (info only)" },
-                                                        ].map(({ prop, thresh, risk }) => (
-                                                            <div key={prop} className="flex items-center justify-between gap-2">
-                                                                <span className="text-[10px] text-gray-400 truncate">{prop}</span>
-                                                                <span className="text-[10px] text-gray-600 flex-shrink-0">
-                                                                    {thresh} → {risk}
-                                                                </span>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                    <p className="text-[10px] text-gray-600 mt-1.5">
-                                                        Includes: measured value · threshold · severity ·
-                                                        clinical implication · redesign recommendation
-                                                    </p>
-                                                </div>
-                                            )}
+                    <div className="h-px bg-gray-800/50" />
 
-                                            {key === "drug_likeness" && (
-                                                <div className="mt-3 space-y-3">
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="flex flex-col gap-0.5">
-                                                            <label className="text-[10px] text-gray-500">Min MW (Da)</label>
-                                                            <input
-                                                                type="number"
-                                                                min={0}
-                                                                max={mwMax - 1}
-                                                                value={mwMin}
-                                                                onChange={(e) => onMwMinChange(Number(e.target.value))}
-                                                                className="w-20 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-emerald-600"
-                                                            />
-                                                        </div>
-                                                        <span className="text-gray-600 mt-4">—</span>
-                                                        <div className="flex flex-col gap-0.5">
-                                                            <label className="text-[10px] text-gray-500">Max MW (Da)</label>
-                                                            <input
-                                                                type="number"
-                                                                min={mwMin + 1}
-                                                                max={1000}
-                                                                value={mwMax}
-                                                                onChange={(e) => onMwMaxChange(Number(e.target.value))}
-                                                                className="w-20 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-emerald-600"
-                                                            />
-                                                        </div>
-                                                        {(mwMin !== 200 || mwMax !== 500) && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => { onMwMinChange(200); onMwMaxChange(500); }}
-                                                                className="text-[10px] text-gray-500 hover:text-emerald-400 transition-colors mt-4"
-                                                            >
-                                                                reset
-                                                            </button>
-                                                        )}
-                                                    </div>
+                    {/* Drug-likeness & Solubility */}
+                    <div className="space-y-4">
+                        <h3 className="text-sm font-medium text-gray-200">Drug-likeness Limits</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div className="space-y-3">
+                                <label className="text-xs text-gray-400">Molecular Weight Range (Da)</label>
+                                <div className="flex items-center gap-2">
+                                    <input
+                                        type="number"
+                                        value={mwMin}
+                                        onChange={(e) => onMwMinChange(Number(e.target.value))}
+                                        className="input w-full text-xs placeholder:Min"
+                                    />
+                                    <span className="text-gray-600">-</span>
+                                    <input
+                                        type="number"
+                                        value={mwMax}
+                                        onChange={(e) => onMwMaxChange(Number(e.target.value))}
+                                        className="input w-full text-xs placeholder:Max"
+                                    />
+                                </div>
+                            </div>
 
-                                                    <div className="flex flex-col gap-1">
-                                                        <label className="text-[10px] text-gray-500 uppercase tracking-wider">
-                                                            Max Lipinski Violations Allowed
-                                                        </label>
-                                                        <select
-                                                            value={violationSelectValue}
-                                                            onChange={(e) => handleViolationChange(e.target.value)}
-                                                            className="w-full px-2 py-1.5 rounded bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-emerald-600 cursor-pointer"
-                                                        >
-                                                            {VIOLATION_OPTIONS.map((opt) => (
-                                                                <option key={opt.value} value={opt.value}>
-                                                                    {opt.label}
-                                                                </option>
-                                                            ))}
-                                                        </select>
-                                                        <p className="text-[10px] text-gray-600">
-                                                            {maxLipinskiViolations === null
-                                                                ? "⚠ All compounds pass — no drug-likeness filtering applied."
-                                                                : maxLipinskiViolations === 1
-                                                                    ? "Classic Lipinski RO5 — recommended for oral drug candidates."
-                                                                    : `Looser filter — allows compounds with up to ${maxLipinskiViolations} rule violations.`
-                                                            }
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            )}
+                            <div className="space-y-3">
+                                <label className="text-xs text-gray-400">Lipinski Filter</label>
+                                <select
+                                    value={violationSelectValue}
+                                    onChange={(e) => handleViolationChange(e.target.value)}
+                                    className="input w-full text-xs"
+                                >
+                                    {VIOLATION_OPTIONS.map((opt) => (
+                                        <option key={opt.value} value={opt.value}>
+                                            {opt.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="space-y-3">
+                                <label className="text-xs text-gray-400">Solubility Filter (logS)</label>
+                                <select
+                                    value={solubilityFilter}
+                                    onChange={(e) => onSolubilityFilterChange(e.target.value as SolubilityFilterMode)}
+                                    className="input w-full text-xs"
+                                >
+                                    {SOLUBILITY_OPTIONS.map((opt) => (
+                                        <option key={opt.value} value={opt.value}>
+                                            {opt.badge} {opt.label}
+                                        </option>
+                                    ))}
+                                </select>
+                                <div className="text-[11px] text-gray-500">
+                                    {SOLUBILITY_OPTIONS.find((o) => o.value === solubilityFilter)?.desc}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="h-px bg-gray-800/50" />
+
+                    {/* NEW: ADMET Thresholds Tuning */}
+                    <div className="space-y-4">
+                        <h3 className="text-sm font-medium text-gray-200 flex items-center gap-2">
+                            <ShieldAlert className="w-4 h-4 text-emerald-400" />
+                            ADMET Thresholds Tuning
+                        </h3>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                            {/* Presets */}
+                            <div className="lg:col-span-4 space-y-3">
+                                <label className="text-xs text-gray-400">Target Profile Preset</label>
+                                <div className="space-y-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => handleAdmetPresetChange("balanced")}
+                                        className={`w-full text-left p-3 rounded-lg border text-sm transition-colors ${admetConfig.preset === "balanced"
+                                                ? "bg-primary/10 border-primary text-primary"
+                                                : "bg-gray-900/30 border-gray-800 text-gray-400 hover:border-gray-600"
+                                            }`}
+                                    >
+                                        <div className="font-medium">Balanced (Default)</div>
+                                        <div className="text-[11px] opacity-70 mt-1">Standard safety thresholds suitable for most early discovery projects.</div>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleAdmetPresetChange("oral")}
+                                        className={`w-full text-left p-3 rounded-lg border text-sm transition-colors ${admetConfig.preset === "oral"
+                                                ? "bg-primary/10 border-primary text-primary"
+                                                : "bg-gray-900/30 border-gray-800 text-gray-400 hover:border-gray-600"
+                                            }`}
+                                    >
+                                        <div className="font-medium">Oral-focused</div>
+                                        <div className="text-[11px] opacity-70 mt-1">Stricter cutoffs for Caco-2 permeability and predicted oral bioavailability.</div>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleAdmetPresetChange("cns")}
+                                        className={`w-full text-left p-3 rounded-lg border text-sm transition-colors ${admetConfig.preset === "cns"
+                                                ? "bg-primary/10 border-primary text-primary"
+                                                : "bg-gray-900/30 border-gray-800 text-gray-400 hover:border-gray-600"
+                                            }`}
+                                    >
+                                        <div className="font-medium">CNS-focused</div>
+                                        <div className="text-[11px] opacity-70 mt-1">Demands higher Blood-Brain Barrier (BBB) penetration scores.</div>
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Sliders for Hard Fails */}
+                            <div className="lg:col-span-8 space-y-5 bg-gray-900/20 p-4 rounded-xl border border-gray-800/50">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <h4 className="text-xs font-semibold text-red-400 tracking-wider uppercase">Critical Safety Limits (Hard Fails)</h4>
+                                </div>
+                                <div className="h-px bg-gray-800 flex-1" />
+
+                                {/* hERG */}
+                                <div className="space-y-4">
+                                    <div className="flex justify-between items-end">
+                                        <div>
+                                            <div className="text-sm font-medium text-gray-200">hERG Inhibition Risk</div>
+                                            <div className="text-[11px] text-gray-500">Probability of binding hERG (cardiac arrhythmia risk). Lower is safer.</div>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="text-xs font-mono text-red-400 bg-red-950/30 px-2 py-1 rounded">
+                                                Fail if &gt;{(admetConfig.herg_inhibition?.severity_high?.toFixed(2) ?? 0.85)}
+                                            </span>
                                         </div>
                                     </div>
+                                    <div className="relative pt-2 pb-6">
+                                        <input
+                                            type="range"
+                                            min={0.5}
+                                            max={0.95}
+                                            step={0.05}
+                                            value={admetConfig.herg_inhibition?.severity_high ?? 0.85}
+                                            onChange={(e) => handleAdmetThresholdChange("herg_inhibition", "severity_high", parseFloat(e.target.value))}
+                                            className="w-full h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-primary"
+                                        />
+                                        <div className="absolute w-full flex justify-between text-[10px] text-gray-600 mt-2 px-1">
+                                            <span>Stricter (0.50)</span>
+                                            <span>Relaxed (0.95)</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Hepatotoxicity */}
+                                <div className="space-y-4">
+                                    <div className="flex justify-between items-end">
+                                        <div>
+                                            <div className="text-sm font-medium text-gray-200">Hepatotoxicity (DILI) Risk</div>
+                                            <div className="text-[11px] text-gray-500">Probability of Drug-Induced Liver Injury. Lower is safer.</div>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="text-xs font-mono text-red-400 bg-red-950/30 px-2 py-1 rounded">
+                                                Fail if &gt;{(admetConfig.hepatotoxicity?.severity_high?.toFixed(2) ?? 0.85)}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div className="relative pt-2 pb-2">
+                                        <input
+                                            type="range"
+                                            min={0.5}
+                                            max={0.95}
+                                            step={0.05}
+                                            value={admetConfig.hepatotoxicity?.severity_high ?? 0.85}
+                                            onChange={(e) => handleAdmetThresholdChange("hepatotoxicity", "severity_high", parseFloat(e.target.value))}
+                                            className="w-full h-1.5 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-primary"
+                                        />
+                                        <div className="absolute w-full flex justify-between text-[10px] text-gray-600 mt-2 px-1">
+                                            <span>Stricter (0.50)</span>
+                                            <span>Relaxed (0.95)</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="h-px bg-gray-800/50" />
+
+                    {/* Active Pipeline Steps */}
+                    <div className="space-y-4">
+                        {toxOnly ? (
+                            <div className="opacity-50 pointer-events-none">
+                                <h3 className="text-sm font-medium text-gray-200 flex items-center gap-2">
+                                    Active Pipeline Steps
+                                    <span className="text-xs text-red-400 font-normal ml-2">(Overridden by Toxicity Report mode)</span>
+                                </h3>
+                            </div>
+                        ) : (
+                            <h3 className="text-sm font-medium text-gray-200 flex items-center gap-2">
+                                Active Pipeline Steps
+                            </h3>
+                        )}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {STEPS.map((step) => {
+                                let isChecked = pipelineSteps[step.key];
+                                if (toxOnly) {
+                                    if (step.key === "admet") isChecked = true;
+                                    else if (step.key !== "drug_likeness") isChecked = false;
+                                }
+
+                                return (
+                                    <label
+                                        key={step.key}
+                                        className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${isChecked ? "bg-gray-800/50 border-gray-700 cursor-pointer" : "bg-transparent border-gray-800/50 hover:bg-gray-900/50 cursor-pointer"
+                                            } ${step.locked ? "opacity-70 cursor-not-allowed" : ""}`}
+                                    >
+                                        <div className="flex items-center h-5">
+                                            <input
+                                                type="checkbox"
+                                                disabled={step.locked || toxOnly}
+                                                checked={isChecked}
+                                                onChange={() => toggleStep(step.key)}
+                                                className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-primary focus:ring-primary focus:ring-offset-gray-900 disabled:opacity-50"
+                                            />
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className="text-sm font-medium text-gray-200">
+                                                {step.label}
+                                                {step.locked && (
+                                                    <span className="ml-2 text-[10px] text-gray-500 uppercase tracking-wider">Required</span>
+                                                )}
+                                            </span>
+                                            <span className="text-xs text-gray-500 mt-1">{step.desc}</span>
+                                        </div>
+                                    </label>
                                 );
                             })}
                         </div>
                     </div>
 
-                    {/* ── 6. Docking speed ─────────────────────────────────── */}
-                    {pipelineSteps.docking && !toxOnly && (
-                        <div>
-                            <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
-                                Docking Speed
-                            </label>
-                            <div className="space-y-2">
-                                {DOCKING_SPEEDS.map(({ value, label, desc }) => (
-                                    <button
-                                        key={value}
-                                        type="button"
-                                        onClick={() => onDockingSpeedChange(value)}
-                                        className={`w-full flex items-center justify-between p-3 rounded-lg border text-left transition-all ${dockingSpeed === value
-                                            ? "bg-emerald-950/30 border-emerald-700 text-emerald-300"
-                                            : "bg-gray-800/30 border-gray-800 text-gray-400 hover:border-gray-700"
-                                            }`}
-                                    >
-                                        <span className="text-sm font-medium">{label}</span>
-                                        <span className="text-xs text-gray-500">{desc}</span>
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    )}
+                    <div className="h-px bg-gray-800/50" />
 
-                    {/* ── 6b. Max compounds to dock ────────────────────────── */}
-                    {pipelineSteps.docking && !toxOnly && (
-                        <div>
-                            <label className="block text-xs font-medium text-gray-400 mb-1 uppercase tracking-wider">
-                                Max Compounds to Dock
-                                <span className="ml-2 normal-case font-normal text-gray-600">
-                                    top-ranked by ML pre-filter
-                                </span>
-                            </label>
-                            <p className="text-xs text-gray-500 mb-3">
-                                After the ML pre-filter ranks all surviving analogues by predicted
-                                binding affinity, only the top N are passed to Vina. Higher N =
-                                better hit coverage but significantly longer runtime.
-                            </p>
-
-                            {/* Preset buttons */}
-                            <div className="flex gap-2 mb-2">
-                                {DOCKING_COUNT_PRESETS.map((n) => (
-                                    <button
-                                        key={n}
-                                        type="button"
-                                        onClick={() => {
-                                            onMaxDockingCompoundsChange(n);
-                                            setDockingCountCustom(false);
-                                        }}
-                                        className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-all ${maxDockingCompounds === n && !dockingCountCustom
-                                            ? "bg-emerald-900/50 border-emerald-600 text-emerald-300"
-                                            : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
-                                            }`}
-                                    >
-                                        Top {n}
-                                    </button>
-                                ))}
-                                <button
-                                    type="button"
-                                    onClick={() => setDockingCountCustom(true)}
-                                    className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-all ${dockingCountCustom || isCustomCount
-                                        ? "bg-emerald-900/50 border-emerald-600 text-emerald-300"
-                                        : "bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600"
-                                        }`}
-                                >
-                                    Custom
-                                </button>
-                            </div>
-
-                            {/* Custom input — shown when Custom is selected or value is non-preset */}
-                            {(dockingCountCustom || isCustomCount) && (
-                                <div className="flex items-center gap-2 mb-2 animate-slide-up">
-                                    <span className="text-xs text-gray-500 flex-shrink-0">
-                                        Count (1–50):
-                                    </span>
-                                    <input
-                                        type="number"
-                                        min={1}
-                                        max={50}
-                                        value={maxDockingCompounds}
-                                        onChange={(e) => {
-                                            const v = Math.max(1, Math.min(50, parseInt(e.target.value) || 10));
-                                            onMaxDockingCompoundsChange(v);
-                                        }}
-                                        className="w-20 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-xs text-white focus:outline-none focus:border-emerald-600"
-                                        autoFocus
-                                    />
-                                    <span className="text-xs text-gray-600">max 50</span>
-                                </div>
-                            )}
-
-                            {/* Time estimate badge */}
-                            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs ${dockingTimeSev === "ok" ? "bg-emerald-950/20 border-emerald-900/50 text-emerald-400" :
-                                    dockingTimeSev === "warn" ? "bg-yellow-950/20 border-yellow-900/50 text-yellow-400" :
-                                        "bg-red-950/20 border-red-900/50 text-red-400"
-                                }`}>
-                                <Clock className="w-3.5 h-3.5 flex-shrink-0" />
-                                <span>
-                                    <strong>{dockingTimeStr}</strong> docking time
-                                    {" "}({maxDockingCompounds} compound{maxDockingCompounds !== 1 ? "s" : ""} × {activeSpeed.minPerCompound} min/{" "}
-                                    {dockingSpeed})
-                                </span>
-                                {dockingTimeSev === "heavy" && (
-                                    <span className="ml-auto text-[10px] text-red-500 flex-shrink-0">
-                                        ⚠ Very long job
-                                    </span>
-                                )}
-                                {dockingTimeSev === "warn" && (
-                                    <span className="ml-auto text-[10px] text-yellow-600 flex-shrink-0">
-                                        Consider Fast speed
-                                    </span>
-                                )}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* ── 7. Binding site ───────────────────────────────────── */}
-                    {pipelineSteps.docking && !toxOnly && (
-                        <div>
-                            <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">
-                                Binding Site Definition
-                            </label>
-                            <div className="flex gap-2 mb-3">
-                                {(["auto", "coordinates", "residues"] as BindingSiteMode[]).map((mode) => (
-                                    <button
-                                        key={mode}
-                                        type="button"
-                                        onClick={() => onBindingSiteModeChange(mode)}
-                                        className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all capitalize ${bindingSiteMode === mode
-                                            ? "bg-emerald-900/50 border-emerald-600 text-emerald-300"
-                                            : "bg-gray-800 border-gray-700 text-gray-500 hover:border-gray-600"
-                                            }`}
-                                    >
-                                        {mode}
-                                    </button>
-                                ))}
-                            </div>
-
-                            {bindingSiteMode === "auto" && (
-                                <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-950/20 border border-blue-900/50">
-                                    <Info className="w-3.5 h-3.5 text-blue-400 mt-0.5 flex-shrink-0" />
-                                    <p className="text-xs text-blue-300">
-                                        Auto-detect uses the co-crystallized ligand centroid if present
-                                        in the PDB file, otherwise falls back to full-protein blind docking.
-                                    </p>
-                                </div>
-                            )}
-
-                            {bindingSiteMode === "coordinates" && (
-                                <div className="grid grid-cols-2 gap-2">
-                                    {(["x", "y", "z"] as const).map((axis) => (
-                                        <div key={axis}>
-                                            <label className="block text-xs text-gray-500 mb-1">
-                                                Center {axis.toUpperCase()}
-                                            </label>
-                                            <input
-                                                type="number"
-                                                className="input-base"
-                                                value={bindingSiteCoords[axis]}
-                                                onChange={(e) =>
-                                                    onBindingSiteCoordsChange({
-                                                        ...bindingSiteCoords,
-                                                        [axis]: parseFloat(e.target.value) || 0,
-                                                    })
-                                                }
-                                                placeholder="0.0"
-                                                step={0.1}
-                                            />
-                                        </div>
+                    {/* Docking Prefilter Tuning */}
+                    <div className={`space-y-4 ${toxOnly || !pipelineSteps.docking ? "opacity-50 pointer-events-none" : ""}`}>
+                        <h3 className="text-sm font-medium text-gray-200">Docking Pre-filter Tuning</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="space-y-3">
+                                <label className="text-xs text-gray-400">Max Compounds to Dock (Top N)</label>
+                                <div className="flex flex-wrap gap-2">
+                                    {DOCKING_COUNT_PRESETS.map((val) => (
+                                        <button
+                                            key={val}
+                                            type="button"
+                                            onClick={() => {
+                                                setDockingCountCustom(false);
+                                                onMaxDockingCompoundsChange(val);
+                                            }}
+                                            className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${!dockingCountCustom && maxDockingCompounds === val ? "bg-primary text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+                                                }`}
+                                        >
+                                            Top {val}
+                                        </button>
                                     ))}
-                                    <div>
-                                        <label className="block text-xs text-gray-500 mb-1">Box Size</label>
-                                        <input
-                                            type="number"
-                                            className="input-base"
-                                            value={bindingSiteCoords.box_size}
-                                            onChange={(e) =>
-                                                onBindingSiteCoordsChange({
-                                                    ...bindingSiteCoords,
-                                                    box_size: parseFloat(e.target.value) || 20,
-                                                })
-                                            }
-                                            placeholder="20.0"
-                                            step={0.5}
-                                            min={10}
-                                            max={60}
-                                        />
-                                    </div>
-                                </div>
-                            )}
-
-                            {bindingSiteMode === "residues" && (
-                                <div className="grid grid-cols-3 gap-2">
-                                    <div>
-                                        <label className="block text-xs text-gray-500 mb-1">Chain ID</label>
-                                        <input
-                                            type="text"
-                                            className="input-base"
-                                            value={bindingSiteResidues.chain}
-                                            onChange={(e) =>
-                                                onBindingSiteResiduesChange({
-                                                    ...bindingSiteResidues,
-                                                    chain: e.target.value.toUpperCase().slice(0, 1),
-                                                })
-                                            }
-                                            placeholder="A"
-                                            maxLength={1}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs text-gray-500 mb-1">Residue Start</label>
-                                        <input
-                                            type="number"
-                                            className="input-base"
-                                            value={bindingSiteResidues.residue_start}
-                                            onChange={(e) =>
-                                                onBindingSiteResiduesChange({
-                                                    ...bindingSiteResidues,
-                                                    residue_start: parseInt(e.target.value) || 1,
-                                                })
-                                            }
-                                            placeholder="1"
-                                            min={1}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs text-gray-500 mb-1">Residue End</label>
-                                        <input
-                                            type="number"
-                                            className="input-base"
-                                            value={bindingSiteResidues.residue_end}
-                                            onChange={(e) =>
-                                                onBindingSiteResiduesChange({
-                                                    ...bindingSiteResidues,
-                                                    residue_end: parseInt(e.target.value) || 100,
-                                                })
-                                            }
-                                            placeholder="100"
-                                            min={1}
-                                        />
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {/* ── 8. Scaffold Lock ──────────────────────────────────── */}
-                    <div>
-                        <label className="block text-xs font-medium text-gray-400 mb-1 uppercase tracking-wider">
-                            Scaffold Lock{" "}
-                            <span className="normal-case font-normal text-gray-600">
-                                (optional — prevents core destruction)
-                            </span>
-                        </label>
-                        <p className="text-xs text-gray-500 mb-3">
-                            Any generated analogue that does <strong className="text-gray-400">not</strong> contain
-                            this SMARTS substructure is rejected at generation time. Use this to stop the AI
-                            from destroying the pharmacophoric core — e.g. the quinolone ring in
-                            fluoroquinolones, or the purine hinge in kinase inhibitors.
-                        </p>
-
-                        <div className="relative mb-3">
-                            <input
-                                type="text"
-                                value={lockedScaffoldSmarts}
-                                onChange={(e) => onLockedScaffoldSmartsChange(e.target.value)}
-                                placeholder="e.g. c1ccc2c(c1)C(=O)c1ccccc1N2  — leave blank to disable"
-                                className={`w-full px-3 py-2 pr-8 rounded-lg bg-gray-800 border text-xs text-white font-mono focus:outline-none placeholder:text-gray-600 transition-colors ${lockedScaffoldSmarts.trim()
-                                    ? "border-amber-700 focus:border-amber-500"
-                                    : "border-gray-700 focus:border-amber-600"
-                                    }`}
-                                spellCheck={false}
-                            />
-                            {lockedScaffoldSmarts && (
-                                <button
-                                    type="button"
-                                    onClick={() => onLockedScaffoldSmartsChange("")}
-                                    className="absolute right-2 top-2 text-gray-600 hover:text-gray-400"
-                                >
-                                    <X className="w-3.5 h-3.5" />
-                                </button>
-                            )}
-                        </div>
-
-                        <button
-                            type="button"
-                            onClick={() => setScaffoldPresetOpen(!scaffoldPresetOpen)}
-                            className="text-[11px] text-amber-600 hover:text-amber-400 transition-colors flex items-center gap-1 mb-2"
-                        >
-                            {scaffoldPresetOpen ? "Hide" : "Show"} common scaffold presets
-                            {scaffoldPresetOpen
-                                ? <ChevronUp className="w-3 h-3" />
-                                : <ChevronDown className="w-3 h-3" />
-                            }
-                        </button>
-
-                        {scaffoldPresetOpen && (
-                            <div className="space-y-1.5 mb-3">
-                                {SCAFFOLD_PRESETS.map(({ label, smarts, hint }) => (
                                     <button
-                                        key={label}
                                         type="button"
-                                        onClick={() => {
-                                            onLockedScaffoldSmartsChange(smarts);
-                                            setScaffoldPresetOpen(false);
-                                        }}
-                                        className={`w-full flex items-start gap-3 p-2.5 rounded-lg border text-left transition-all ${lockedScaffoldSmarts === smarts
-                                            ? "bg-amber-950/30 border-amber-700"
-                                            : "bg-gray-800/30 border-gray-800 hover:border-gray-700"
+                                        onClick={() => setDockingCountCustom(true)}
+                                        className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${dockingCountCustom || isCustomCount ? "bg-primary text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
                                             }`}
                                     >
-                                        <Lock className={`w-3 h-3 mt-0.5 flex-shrink-0 ${lockedScaffoldSmarts === smarts ? "text-amber-400" : "text-gray-600"
-                                            }`} />
-                                        <div className="min-w-0">
-                                            <p className={`text-xs font-medium ${lockedScaffoldSmarts === smarts ? "text-amber-300" : "text-gray-300"
-                                                }`}>
-                                                {label}
-                                            </p>
-                                            <p className="text-[10px] text-gray-500 mt-0.5">{hint}</p>
-                                            <p className="text-[10px] font-mono text-gray-600 mt-0.5 truncate">
-                                                {smarts}
-                                            </p>
-                                        </div>
+                                        Custom
                                     </button>
-                                ))}
+                                </div>
+                                {(dockingCountCustom || isCustomCount) && (
+                                    <div className="mt-2 flex items-center gap-3">
+                                        <input
+                                            type="range"
+                                            min={1}
+                                            max={50}
+                                            value={maxDockingCompounds}
+                                            onChange={(e) => onMaxDockingCompoundsChange(parseInt(e.target.value))}
+                                            className="w-full accent-primary"
+                                        />
+                                        <span className="text-sm font-mono text-gray-300 w-8">{maxDockingCompounds}</span>
+                                    </div>
+                                )}
+                                <div className={`flex items-start gap-2 text-xs mt-2 p-2 rounded bg-gray-900/50 border ${dockingTimeSev === "heavy" ? "border-red-900/50 text-red-400" :
+                                        dockingTimeSev === "warn" ? "border-yellow-900/50 text-yellow-400" :
+                                            "border-gray-800 text-gray-400"
+                                    }`}>
+                                    <Clock className="w-4 h-4 shrink-0" />
+                                    <div>
+                                        <span className="font-medium">Estimated compute time: {dockingTimeStr}</span>
+                                        <p className="opacity-80 mt-0.5">Vina runs ~{activeSpeed.minPerCompound} mins per compound on current settings.</p>
+                                    </div>
+                                </div>
                             </div>
-                        )}
 
-                        {lockedScaffoldSmarts.trim() && (
-                            <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-950/20 border border-amber-900/40">
-                                <Lock className="w-3 h-3 text-amber-400 mt-0.5 flex-shrink-0" />
-                                <p className="text-[11px] text-amber-300/80 leading-relaxed">
-                                    Scaffold lock active — analogues missing this substructure will be
-                                    silently rejected during generation. This reduces yield but preserves
-                                    the pharmacophoric core.
-                                </p>
+                            <div className="space-y-3">
+                                <label className="text-xs text-gray-400">Vina Exhaustiveness</label>
+                                <div className="grid grid-cols-1 gap-2">
+                                    {DOCKING_SPEEDS.map((speed) => (
+                                        <label
+                                            key={speed.value}
+                                            className={`flex items-center justify-between p-2.5 rounded border cursor-pointer transition-colors ${dockingSpeed === speed.value
+                                                    ? "bg-primary/10 border-primary text-primary"
+                                                    : "bg-gray-800/30 border-gray-700 text-gray-300 hover:bg-gray-800"
+                                                }`}
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <input
+                                                    type="radio"
+                                                    name="dockingSpeed"
+                                                    value={speed.value}
+                                                    checked={dockingSpeed === speed.value}
+                                                    onChange={(e) => onDockingSpeedChange(e.target.value as DockingSpeed)}
+                                                    className="text-primary focus:ring-primary bg-gray-900 border-gray-600"
+                                                />
+                                                <span className="text-sm font-medium">{speed.label}</span>
+                                            </div>
+                                            <span className="text-xs text-gray-500 font-mono">{speed.desc}</span>
+                                        </label>
+                                    ))}
+                                </div>
                             </div>
-                        )}
+                        </div>
                     </div>
 
                 </div>
