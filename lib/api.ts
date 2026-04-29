@@ -12,9 +12,17 @@ export type JobStatus = "queued" | "running" | "done" | "failed";
 export type SolubilityFilterMode = "soluble_only" | "allow_slightly" | "all";
 export type DockingFileType = "pdbqt" | "pose_pdb" | "complex_pdb";
 export type ADMETPreset = "balanced" | "cns" | "oral" | "custom";
-export type ADMETCategory = "absorption" | "distribution" | "metabolism" | "excretion" | "toxicity" | "physchem" | "other";
+export type ADMETCategory =
+    | "absorption"
+    | "distribution"
+    | "metabolism"
+    | "excretion"
+    | "toxicity"
+    | "physchem"
+    | "other";
 export type NarrativeLevel = "info" | "good" | "warning" | "danger";
 export type OverallRisk = "low" | "moderate" | "high";
+export type ComplexityCategory = "easy" | "moderate" | "hard" | "very hard" | "infeasible";
 
 // ── Pipeline config types ─────────────────────────────────────────────────────
 
@@ -62,25 +70,32 @@ export interface ADMETTuningConfig {
     bbb_penetration?: ADMETThresholdConfig;
 }
 
-// Default ADMET threshold presets for use in UI initialisation
-
 export const ADMET_PRESET_DEFAULTS: Record<ADMETPreset, Partial<ADMETTuningConfig>> = {
     balanced: {
         preset: "balanced",
-        herg_inhibition: { cutoff: 0.50, direction: "above", severity_high: 0.85, hard_fail: true },
-        hepatotoxicity: { cutoff: 0.50, direction: "above", severity_high: 0.85, hard_fail: true },
+        herg_inhibition: { cutoff: 0.5, direction: "above", severity_high: 0.85, hard_fail: true },
+        hepatotoxicity: { cutoff: 0.5, direction: "above", severity_high: 0.85, hard_fail: true },
         caco2_permeability: { cutoff: -5.15, direction: "below", severity_high: -6.5, hard_fail: false },
-        oral_bioavailability: { cutoff: 0.30, direction: "below", severity_high: 0.10, hard_fail: false },
-        bbb_penetration: { cutoff: 0.30, direction: "below", severity_high: null, hard_fail: false },
+        oral_bioavailability: { cutoff: 0.3, direction: "below", severity_high: 0.1, hard_fail: false },
+        bbb_penetration: { cutoff: 0.3, direction: "below", severity_high: null, hard_fail: false },
     },
     cns: {
         preset: "cns",
-        bbb_penetration: { cutoff: 0.60, direction: "below", severity_high: 0.30, hard_fail: false },
+        herg_inhibition: { cutoff: 0.5, direction: "above", severity_high: 0.85, hard_fail: true },
+        hepatotoxicity: { cutoff: 0.5, direction: "above", severity_high: 0.85, hard_fail: true },
+        caco2_permeability: { cutoff: -5.15, direction: "below", severity_high: -6.5, hard_fail: false },
+        oral_bioavailability: { cutoff: 0.3, direction: "below", severity_high: 0.1, hard_fail: false },
+        // CNS: tighter BBB requirement — compounds must penetrate
+        bbb_penetration: { cutoff: 0.6, direction: "below", severity_high: 0.3, hard_fail: false },
     },
     oral: {
         preset: "oral",
-        caco2_permeability: { cutoff: -5.00, direction: "below", severity_high: -6.00, hard_fail: false },
-        oral_bioavailability: { cutoff: 0.40, direction: "below", severity_high: 0.20, hard_fail: false },
+        herg_inhibition: { cutoff: 0.5, direction: "above", severity_high: 0.85, hard_fail: true },
+        hepatotoxicity: { cutoff: 0.5, direction: "above", severity_high: 0.85, hard_fail: true },
+        // Oral: tighter permeability and bioavailability thresholds
+        caco2_permeability: { cutoff: -5.0, direction: "below", severity_high: -6.0, hard_fail: false },
+        oral_bioavailability: { cutoff: 0.4, direction: "below", severity_high: 0.2, hard_fail: false },
+        bbb_penetration: { cutoff: 0.3, direction: "below", severity_high: null, hard_fail: false },
     },
     custom: {
         preset: "custom",
@@ -101,6 +116,19 @@ export const ADMET_ENDPOINT_UNITS: Record<string, string> = {
     caco2_permeability: "log cm/s",
     oral_bioavailability: "probability",
     bbb_penetration: "probability",
+};
+
+export const ADMET_ENDPOINT_DESCRIPTIONS: Record<string, string> = {
+    herg_inhibition:
+        "Predicted probability of inhibiting the hERG potassium channel. High values risk QT prolongation / arrhythmia. Hard-fail if >cutoff AND >severity_high.",
+    hepatotoxicity:
+        "Predicted probability of drug-induced liver injury (DILI). Leading cause of FDA drug withdrawal. Hard-fail if >cutoff AND >severity_high.",
+    caco2_permeability:
+        "Predicted intestinal permeability (Caco-2 Wang model). More negative = lower absorption. Informational only — not all drugs require high permeability.",
+    oral_bioavailability:
+        "Predicted fraction of drug reaching systemic circulation orally (Bioavailability_Ma, binary classifier). Informational — ~30% FPR on diverse scaffolds.",
+    bbb_penetration:
+        "Predicted blood-brain barrier penetration probability (BBB Martins). Informational — only flag if CNS target is intended.",
 };
 
 // ── Job request ───────────────────────────────────────────────────────────────
@@ -232,11 +260,30 @@ export interface DockingResult {
     poses: DockingPose[];
 }
 
+// ── Retrosynthesis result types (UPDATED — mirrors retrosynthesis.py) ─────────
+
 export interface RetrosynthesisStep {
     step_number: number;
+
+    // Identity
+    reaction_name?: string | null;
+    reaction_type?: string | null;
     reaction_smarts: string;
+
+    // Materials
     starting_materials: string[];
+    product_smiles?: string | null;
+
+    // Lab protocol (rich data from retrosynthesis.py)
+    schematic?: string | null;
+    reagents: string[];
+    conditions?: string | null;
+    protocol_steps: string[];
+
+    // Metadata
     confidence: number;
+    estimated_yield?: string | null;
+    notes?: string | null;
 }
 
 export interface RetrosynthesisResult {
@@ -244,7 +291,17 @@ export interface RetrosynthesisResult {
     num_steps: number;
     route: RetrosynthesisStep[];
     complexity_score: number;
+
+    // Extended fields from retrosynthesis.py
+    sa_score?: number | null;
+    complexity_category?: ComplexityCategory | null;
+    functional_groups_detected: string[];
+    disconnection_points: string[];
+    synthesis_overview?: string | null;
+    alternative_routes_hint?: string | null;
 }
+
+// ── Compound result ───────────────────────────────────────────────────────────
 
 export interface CompoundResult {
     smiles: string;
@@ -308,7 +365,9 @@ export async function submitJob(request: JobRequest): Promise<JobSubmitResponse>
     });
     if (!response.ok) {
         const error = await response.json().catch(() => ({}));
-        throw new Error(error?.detail || `Job submission failed with status ${response.status}`);
+        throw new Error(
+            error?.detail || `Job submission failed with status ${response.status}`
+        );
     }
     return response.json();
 }
@@ -345,14 +404,20 @@ export async function submitJobWithFile(
         formData.append("mw_max", String(options.mw_max ?? 500));
         formData.append(
             "max_lipinski_violations",
-            String(options.max_lipinski_violations === null ? -1 : (options.max_lipinski_violations ?? 1))
+            String(
+                options.max_lipinski_violations === null
+                    ? -1
+                    : (options.max_lipinski_violations ?? 1)
+            )
         );
         formData.append("solubility_filter", options.solubility_filter ?? "all");
-        formData.append("toxicity_report_only", String(options.toxicity_report_only ?? false));
+        formData.append(
+            "toxicity_report_only",
+            String(options.toxicity_report_only ?? false)
+        );
         if (options.locked_scaffold_smarts) {
             formData.append("locked_scaffold_smarts", options.locked_scaffold_smarts);
         }
-        // Serialise admet_config as a JSON string field — unpack on backend in the upload router
         if (options.admet_config) {
             formData.append("admet_config", JSON.stringify(options.admet_config));
         }
@@ -363,12 +428,13 @@ export async function submitJobWithFile(
         });
         if (!response.ok) {
             const error = await response.json().catch(() => ({}));
-            throw new Error(error?.detail || `File upload failed with status ${response.status}`);
+            throw new Error(
+                error?.detail || `File upload failed with status ${response.status}`
+            );
         }
         return response.json();
     }
 
-    // No file — send JSON directly so admet_config nests cleanly
     return submitJob({
         smiles,
         num_analogues: options.num_analogues,
@@ -392,7 +458,8 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
         cache: "no-store",
     });
     if (!response.ok) {
-        if (response.status === 404) throw new Error(`Job '${jobId}' not found. It may have expired.`);
+        if (response.status === 404)
+            throw new Error(`Job '${jobId}' not found. It may have expired.`);
         throw new Error(`Status fetch failed: HTTP ${response.status}`);
     }
     return response.json();
@@ -418,7 +485,8 @@ export async function getScoreBreakdown(
         `${BACKEND_URL}/api/v1/jobs/${jobId}/score-breakdown/${compoundIndex}`,
         { cache: "no-store" }
     );
-    if (!response.ok) throw new Error(`Score breakdown fetch failed: HTTP ${response.status}`);
+    if (!response.ok)
+        throw new Error(`Score breakdown fetch failed: HTTP ${response.status}`);
     return response.json();
 }
 
@@ -434,9 +502,7 @@ export async function pingBackend(): Promise<boolean> {
     }
 }
 
-export async function fetchPdbMetadata(
-    pdbId: string
-): Promise<{
+export async function fetchPdbMetadata(pdbId: string): Promise<{
     title: string;
     resolution_angstrom: number | null;
     protein_chains: number;
@@ -544,6 +610,22 @@ export function getCategoryColor(category: ADMETCategory): string {
         other: "text-gray-500",
     };
     return map[category] ?? "text-gray-500";
+}
+
+export function getComplexityColor(category: ComplexityCategory | null | undefined): string {
+    if (!category) return "text-gray-400";
+    if (category === "easy") return "text-emerald-400";
+    if (category === "moderate") return "text-yellow-400";
+    if (category === "hard") return "text-orange-400";
+    if (category === "very hard") return "text-red-400";
+    return "text-red-600";
+}
+
+export function getSAScoreColor(score: number): string {
+    if (score <= 3.5) return "text-emerald-400";
+    if (score <= 5.0) return "text-yellow-400";
+    if (score <= 6.5) return "text-orange-400";
+    return "text-red-400";
 }
 
 export function formatProbability(value: number): string {
