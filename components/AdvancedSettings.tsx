@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
     ChevronDown, ChevronUp, Info, Zap, FlaskConical,
     Lock, X, Clock, ShieldAlert, Settings2, Dna, Pill, Brain,
+    Activity, Layers, Target, AlertTriangle,
 } from "lucide-react";
 import type {
     PipelineSteps,
@@ -54,51 +55,58 @@ interface AdvancedSettingsProps {
 
 // ── Static config ─────────────────────────────────────────────────────────────
 
-const STEPS: { key: keyof PipelineSteps; label: string; desc: string; locked?: boolean }[] = [
-    { key: "drug_likeness", label: "Drug-likeness Filter", desc: "Lipinski RO5 + ESOL solubility (RDKit)", locked: true },
-    { key: "admet", label: "ADMET Toxicity Filter", desc: "hERG, hepatotox, Caco-2, bioavailability (ADMET-AI)" },
-    { key: "binding_prefilter", label: "ML Binding Pre-filter", desc: "GNN affinity ranking — sends top N for docking (DeepChem AttentiveFP)" },
-    { key: "docking", label: "Molecular Docking", desc: "AutoDock Vina with CNN rescoring" },
-    { key: "retrosynthesis", label: "Retrosynthesis", desc: "SA Score + feasibility (AiZynthFinder)" },
+const STEPS: { key: keyof PipelineSteps; label: string; desc: string; locked?: boolean; icon: React.ReactNode }[] = [
+    { key: "drug_likeness", label: "Drug-likeness Filter", desc: "Lipinski RO5 + ESOL solubility (RDKit)", locked: true, icon: <Activity className="w-3.5 h-3.5" /> },
+    { key: "admet", label: "ADMET Toxicity Filter", desc: "hERG, hepatotox, Caco-2, bioavailability (ADMET-AI)", icon: <ShieldAlert className="w-3.5 h-3.5" /> },
+    { key: "binding_prefilter", label: "ML Binding Pre-filter", desc: "GNN affinity ranking — sends top N for docking (DeepChem AttentiveFP)", icon: <Layers className="w-3.5 h-3.5" /> },
+    { key: "docking", label: "Molecular Docking", desc: "AutoDock Vina with CNN rescoring", icon: <Target className="w-3.5 h-3.5" /> },
+    { key: "retrosynthesis", label: "Retrosynthesis", desc: "SA Score + feasibility (AiZynthFinder)", icon: <Dna className="w-3.5 h-3.5" /> },
 ];
 
-const DOCKING_SPEEDS: { value: DockingSpeed; label: string; desc: string; minPerCompound: number }[] = [
-    { value: "fast", label: "Fast", desc: "exhaustiveness=8 · ~5 min/cpd", minPerCompound: 5 },
-    { value: "balanced", label: "Balanced", desc: "exhaustiveness=16 · ~10 min/cpd", minPerCompound: 10 },
-    { value: "thorough", label: "Thorough", desc: "exhaustiveness=32 · ~20 min/cpd", minPerCompound: 20 },
+const DOCKING_SPEEDS: { value: DockingSpeed; label: string; tag: string; detail: string; minPerCompound: number }[] = [
+    { value: "fast", label: "Fast", tag: "=8", detail: "~5 min/cpd", minPerCompound: 5 },
+    { value: "balanced", label: "Balanced", tag: "=16", detail: "~10 min/cpd", minPerCompound: 10 },
+    { value: "thorough", label: "Thorough", tag: "=32", detail: "~20 min/cpd", minPerCompound: 20 },
 ];
 
 const DOCKING_COUNT_PRESETS = [10, 25, 50] as const;
 
-const VIOLATION_OPTIONS: { value: string; label: string }[] = [
-    { value: "1", label: "Strict — ≤1 violation (classic RO5)" },
-    { value: "2", label: "Relaxed — ≤2 violations" },
-    { value: "3", label: "Lenient — ≤3 violations" },
-    { value: "null", label: "Disabled — no filter" },
+const VIOLATION_OPTIONS: { value: string; label: string; sub: string }[] = [
+    { value: "1", label: "Strict", sub: "≤1 violation — classic RO5" },
+    { value: "2", label: "Relaxed", sub: "≤2 violations" },
+    { value: "3", label: "Lenient", sub: "≤3 violations" },
+    { value: "null", label: "Disabled", sub: "No Lipinski filter" },
 ];
 
-const SOLUBILITY_OPTIONS: { value: SolubilityFilterMode; label: string; desc: string }[] = [
-    { value: "soluble_only", label: "Soluble only", desc: "logS > −3: aqueous assay-ready" },
-    { value: "allow_slightly", label: "Slightly soluble", desc: "logS > −5: may need formulation" },
-    { value: "all", label: "No filter", desc: "No solubility restriction" },
+const SOLUBILITY_OPTIONS: { value: SolubilityFilterMode; label: string; sub: string }[] = [
+    { value: "soluble_only", label: "Soluble only", sub: "logS > −3 · aqueous assay-ready" },
+    { value: "allow_slightly", label: "Slightly soluble", sub: "logS > −5 · may need formulation" },
+    { value: "all", label: "No filter", sub: "No solubility restriction" },
 ];
 
 const SCAFFOLD_PRESETS = [
     { label: "Quinolone", smarts: "c1ccc2cc1C(=O)c1ccccc1N2", hint: "Fluoroquinolone bicyclic ring" },
     { label: "Benzimidazole", smarts: "c1ccc2nHcnc2c1", hint: "Fused benzimidazole core" },
     { label: "Flavone", smarts: "O=c1cc(-c2ccccc2)oc2ccccc12", hint: "2-phenyl-4H-chromen-4-one" },
-    { label: "Purine", smarts: "c1nc2nHcnc2n1", hint: "Adenine-like, kinase hinge binder" },
+    { label: "Purine", smarts: "c1nc2nHcnc2n1", hint: "Adenine-like, kinase hinge" },
     { label: "Indole", smarts: "c1ccc2nHccc2c1", hint: "Bicyclic indole ring system" },
 ];
 
 const ANALOGUE_PRESETS = [25, 50, 100, 500, 1000] as const;
 
-const ADMET_PRESETS: { value: ADMETPreset; label: string; desc: string; icon: React.ReactNode }[] = [
-    { value: "balanced", label: "Balanced", desc: "Standard early discovery thresholds", icon: <Settings2 className="w-3.5 h-3.5" /> },
-    { value: "oral", label: "Oral-focused", desc: "Stricter Caco-2 & bioavailability", icon: <Pill className="w-3.5 h-3.5" /> },
-    { value: "cns", label: "CNS-focused", desc: "Higher BBB penetration required", icon: <Brain className="w-3.5 h-3.5" /> },
-    { value: "custom", label: "Custom", desc: "Manual threshold adjustments", icon: <Dna className="w-3.5 h-3.5" /> },
+const ADMET_PRESETS: { value: ADMETPreset; label: string; desc: string; icon: React.ReactNode; accent: string }[] = [
+    { value: "balanced", label: "Balanced", desc: "Standard early discovery thresholds", icon: <Settings2 className="w-4 h-4" />, accent: "teal" },
+    { value: "oral", label: "Oral-focused", desc: "Stricter Caco-2 & bioavailability", icon: <Pill className="w-4 h-4" />, accent: "blue" },
+    { value: "cns", label: "CNS-focused", desc: "Higher BBB penetration required", icon: <Brain className="w-4 h-4" />, accent: "violet" },
+    { value: "custom", label: "Custom", desc: "Manual threshold adjustments", icon: <Dna className="w-4 h-4" />, accent: "amber" },
 ];
+
+const PRESET_ACCENT: Record<string, string> = {
+    teal: "border-teal-600/70   bg-teal-950/40   text-teal-300   [&_svg]:text-teal-400",
+    blue: "border-blue-600/70   bg-blue-950/40   text-blue-300   [&_svg]:text-blue-400",
+    violet: "border-violet-600/70 bg-violet-950/40 text-violet-300 [&_svg]:text-violet-400",
+    amber: "border-amber-600/70  bg-amber-950/40  text-amber-300  [&_svg]:text-amber-400",
+};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -117,18 +125,129 @@ function dockingTimeSeverity(compounds: number, minPerCompound: number): "ok" | 
     return "heavy";
 }
 
+function sliderFillStyle(value: number, min: number, max: number, color: string): React.CSSProperties {
+    const pct = ((value - min) / (max - min)) * 100;
+    return {
+        background: `linear-gradient(to right, ${color} 0%, ${color} ${pct}%, rgb(55 65 81) ${pct}%, rgb(55 65 81) 100%)`,
+    };
+}
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function SectionHeader({
+    icon,
+    label,
+    aside,
+}: {
+    icon: React.ReactNode;
+    label: string;
+    aside?: React.ReactNode;
+}) {
     return (
-        <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-500 mb-3">
-            {children}
-        </p>
+        <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center gap-2.5">
+                <span className="text-gray-500">{icon}</span>
+                <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-gray-400">
+                    {label}
+                </span>
+            </div>
+            {aside && <div className="flex items-center">{aside}</div>}
+        </div>
     );
 }
 
-function Divider() {
-    return <div className="h-px bg-gray-800/70 my-1" />;
+function SectionDivider() {
+    return <div className="h-px bg-gradient-to-r from-transparent via-gray-700/60 to-transparent my-1" />;
+}
+
+function FieldLabel({ children, hint }: { children: React.ReactNode; hint?: string }) {
+    return (
+        <div className="flex items-center gap-1.5 mb-2.5">
+            <span className="text-xs font-semibold text-gray-300">{children}</span>
+            {hint && (
+                <span className="group relative cursor-help">
+                    <Info className="w-3 h-3 text-gray-600 group-hover:text-gray-400 transition-colors" />
+                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-300 invisible group-hover:visible z-50 pointer-events-none leading-relaxed shadow-xl">
+                        {hint}
+                    </span>
+                </span>
+            )}
+        </div>
+    );
+}
+
+function SegmentedPill<T extends string | number>({
+    options,
+    value,
+    onChange,
+    renderLabel,
+}: {
+    options: T[];
+    value: T;
+    onChange: (v: T) => void;
+    renderLabel?: (v: T) => React.ReactNode;
+}) {
+    return (
+        <div className="inline-flex items-center gap-1 bg-gray-900/60 border border-gray-700/60 rounded-xl p-1">
+            {options.map((opt) => (
+                <button
+                    key={String(opt)}
+                    type="button"
+                    onClick={() => onChange(opt)}
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${value === opt
+                            ? "bg-teal-600 text-white shadow-sm shadow-teal-900/50"
+                            : "text-gray-400 hover:text-gray-200 hover:bg-gray-700/50"
+                        }`}
+                >
+                    {renderLabel ? renderLabel(opt) : String(opt)}
+                </button>
+            ))}
+        </div>
+    );
+}
+
+function RunModeCard({
+    checked,
+    onChange,
+    icon,
+    title,
+    desc,
+    activeColor,
+}: {
+    checked: boolean;
+    onChange: (v: boolean) => void;
+    icon: React.ReactNode;
+    title: string;
+    desc: string;
+    activeColor: string;
+}) {
+    return (
+        <label className={`flex items-start gap-4 p-4 rounded-2xl border cursor-pointer transition-all select-none ${checked ? activeColor : "bg-gray-900/20 border-gray-800 hover:border-gray-600 hover:bg-gray-800/30"
+            }`}>
+            <input
+                type="checkbox"
+                checked={checked}
+                onChange={(e) => onChange(e.target.checked)}
+                className="sr-only"
+            />
+            <div className={`mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all ${checked ? "bg-current border-current" : "border-gray-600 bg-gray-800"
+                }`}
+                style={{ color: checked ? undefined : undefined }}
+            >
+                {checked && (
+                    <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
+                        <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                )}
+            </div>
+            <div className="min-w-0">
+                <p className="text-sm font-semibold text-gray-100 flex items-center gap-2">
+                    {icon} {title}
+                </p>
+                <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">{desc}</p>
+            </div>
+        </label>
+    );
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -155,47 +274,49 @@ export default function AdvancedSettings({
 
     const toxOnly = toxicityReportOnly && !directScoreOnly;
     const bothModes = toxicityReportOnly && directScoreOnly;
-    const analoguesDisabled = directScoreOnly;
+    const analoguesOff = directScoreOnly;
 
     const toggleStep = (key: keyof PipelineSteps) => {
         if (key === "drug_likeness") return;
         onPipelineStepsChange({ ...pipelineSteps, [key]: !pipelineSteps[key] });
     };
 
-    const violationSelectValue = maxLipinskiViolations === null ? "null" : String(maxLipinskiViolations);
-    const handleViolationChange = (raw: string) => {
+    const violationVal = maxLipinskiViolations === null ? "null" : String(maxLipinskiViolations);
+    const handleViolation = (raw: string) =>
         onMaxLipinskiViolationsChange(raw === "null" ? null : parseInt(raw, 10));
-    };
 
-    const handleAdmetPresetChange = (preset: ADMETPreset) => {
+    const handleAdmetPreset = (preset: ADMETPreset) => {
         const defaults = ADMET_PRESET_DEFAULTS[preset];
         onAdmetConfigChange({ ...admetConfig, ...defaults, preset });
     };
 
-    const handleAdmetThresholdChange = (
+    const handleAdmetSlider = (
         endpoint: "herg_inhibition" | "hepatotoxicity",
         field: "cutoff" | "severity_high",
-        value: number
+        value: number,
     ) => {
-        const currentEndpoint = admetConfig[endpoint] || ADMET_PRESET_DEFAULTS.balanced![endpoint]!;
+        const current = admetConfig[endpoint] ?? ADMET_PRESET_DEFAULTS.balanced![endpoint]!;
         onAdmetConfigChange({
             ...admetConfig,
             preset: "custom",
-            [endpoint]: { ...currentEndpoint, [field]: value },
+            [endpoint]: { ...current, [field]: value },
         });
     };
 
     const activeSpeed = DOCKING_SPEEDS.find((s) => s.value === dockingSpeed)!;
-    const dockingTimeStr = formatDockingTime(maxDockingCompounds, activeSpeed.minPerCompound);
-    const dockingTimeSev = dockingTimeSeverity(maxDockingCompounds, activeSpeed.minPerCompound);
+    const dockTimeStr = formatDockingTime(maxDockingCompounds, activeSpeed.minPerCompound);
+    const dockTimeSev = dockingTimeSeverity(maxDockingCompounds, activeSpeed.minPerCompound);
     const isCustomCount = !DOCKING_COUNT_PRESETS.includes(maxDockingCompounds as typeof DOCKING_COUNT_PRESETS[number]);
 
+    const hergVal = admetConfig.herg_inhibition?.severity_high ?? 0.85;
+    const hepatoVal = admetConfig.hepatotoxicity?.severity_high ?? 0.85;
+
     const activeBadges = [
-        directScoreOnly && { label: "Direct Score", color: "bg-violet-900/60 border-violet-700/60 text-violet-300", icon: <Zap className="w-3 h-3" /> },
-        toxicityReportOnly && { label: bothModes ? "Tox + Direct" : "Toxicity Only", color: "bg-red-900/60 border-red-700/60 text-red-300", icon: <FlaskConical className="w-3 h-3" /> },
-        lockedScaffoldSmarts.trim() && { label: "Scaffold Lock", color: "bg-amber-900/60 border-amber-700/60 text-amber-300", icon: <Lock className="w-3 h-3" /> },
-        admetConfig.preset !== "balanced" && { label: `${admetConfig.preset} ADMET`, color: "bg-emerald-900/60 border-emerald-700/60 text-emerald-300", icon: <ShieldAlert className="w-3 h-3" /> },
-    ].filter(Boolean) as { label: string; color: string; icon: React.ReactNode }[];
+        directScoreOnly && { label: "Direct Score", color: "bg-violet-900/50 border-violet-700/50 text-violet-300" },
+        toxicityReportOnly && { label: bothModes ? "Tox + Direct" : "Tox Only", color: "bg-red-900/50 border-red-700/50 text-red-300" },
+        lockedScaffoldSmarts.trim() && { label: "Scaffold Lock", color: "bg-amber-900/50 border-amber-700/50 text-amber-300" },
+        admetConfig.preset !== "balanced" && { label: `${admetConfig.preset} ADMET`, color: "bg-teal-900/50 border-teal-700/50 text-teal-300" },
+    ].filter(Boolean) as { label: string; color: string }[];
 
     return (
         <div className="card mt-4">
@@ -203,101 +324,91 @@ export default function AdvancedSettings({
             <button
                 type="button"
                 onClick={() => setOpen(!open)}
-                className="w-full flex items-center justify-between text-sm font-medium text-gray-300 hover:text-white transition-colors"
+                className="w-full flex items-center justify-between text-sm font-semibold text-gray-300 hover:text-white transition-colors group"
             >
-                <span className="flex items-center gap-2.5 flex-wrap">
-                    <Settings2 className="w-4 h-4 text-gray-500" />
+                <span className="flex items-center gap-3 flex-wrap">
+                    <Settings2 className="w-4 h-4 text-gray-500 group-hover:text-gray-400 transition-colors" />
                     <span>Advanced Settings</span>
                     {activeBadges.map((b) => (
                         <span
                             key={b.label}
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${b.color}`}
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold border ${b.color}`}
                         >
-                            {b.icon} {b.label}
+                            {b.label}
                         </span>
                     ))}
                 </span>
-                {open
-                    ? <ChevronUp className="w-4 h-4 text-gray-500 shrink-0" />
-                    : <ChevronDown className="w-4 h-4 text-gray-500 shrink-0" />
-                }
+                <span className="flex items-center gap-1.5 text-xs text-gray-600 group-hover:text-gray-400 transition-colors shrink-0">
+                    {open ? (
+                        <><ChevronUp className="w-4 h-4" /> Collapse</>
+                    ) : (
+                        <><ChevronDown className="w-4 h-4" /> Expand</>
+                    )}
+                </span>
             </button>
 
             {open && (
                 <div className="mt-8 space-y-10 animate-in fade-in slide-in-from-top-2 duration-200">
 
-                    {/* ── SECTION 1 · Run Mode ── */}
-                    <section className="space-y-3">
-                        <SectionLabel>Run Mode</SectionLabel>
+                    {/* ════════════════════════════════
+                        SECTION 1 · Run Mode
+                    ════════════════════════════════ */}
+                    <section>
+                        <SectionHeader
+                            icon={<Zap className="w-4 h-4" />}
+                            label="Run Mode"
+                        />
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <label className={`flex items-start gap-4 p-4 rounded-xl border cursor-pointer transition-all ${directScoreOnly
-                                ? "bg-violet-950/30 border-violet-700/50"
-                                : "bg-gray-900/30 border-gray-800 hover:border-gray-700 hover:bg-gray-800/30"
-                                }`}>
-                                <div className="pt-0.5">
-                                    <input
-                                        type="checkbox"
-                                        checked={directScoreOnly}
-                                        onChange={(e) => onDirectScoreOnlyChange(e.target.checked)}
-                                        className="w-4 h-4 rounded border-gray-700 bg-gray-800 text-primary focus:ring-primary focus:ring-offset-gray-900"
-                                    />
-                                </div>
-                                <div>
-                                    <p className="text-sm font-semibold text-gray-100 flex items-center gap-1.5">
-                                        <Zap className="w-4 h-4 text-violet-400" /> Direct Score Only
-                                    </p>
-                                    <p className="text-xs text-gray-400 mt-1.5 leading-relaxed">
-                                        Skip analogue generation. Runs the input compound straight through the pipeline as-is.
-                                    </p>
-                                </div>
-                            </label>
-
-                            <label className={`flex items-start gap-4 p-4 rounded-xl border cursor-pointer transition-all ${toxicityReportOnly
-                                ? "bg-red-950/30 border-red-700/50"
-                                : "bg-gray-900/30 border-gray-800 hover:border-gray-700 hover:bg-gray-800/30"
-                                }`}>
-                                <div className="pt-0.5">
-                                    <input
-                                        type="checkbox"
-                                        checked={toxicityReportOnly}
-                                        onChange={(e) => onToxicityReportOnlyChange(e.target.checked)}
-                                        className="w-4 h-4 rounded border-gray-700 bg-gray-800 text-primary focus:ring-primary focus:ring-offset-gray-900"
-                                    />
-                                </div>
-                                <div>
-                                    <p className="text-sm font-semibold text-gray-100 flex items-center gap-1.5">
-                                        <FlaskConical className="w-4 h-4 text-red-400" /> Toxicity Report Only
-                                    </p>
-                                    <p className="text-xs text-gray-400 mt-1.5 leading-relaxed">
-                                        Forces ADMET on all compounds and skips PDB/docking entirely. Fast profiling mode.
-                                    </p>
-                                </div>
-                            </label>
+                            <RunModeCard
+                                checked={directScoreOnly}
+                                onChange={onDirectScoreOnlyChange}
+                                icon={<Zap className="w-3.5 h-3.5 text-violet-400" />}
+                                title="Direct Score Only"
+                                desc="Skip analogue generation. Runs the input compound straight through the pipeline as-is."
+                                activeColor="bg-violet-950/30 border-violet-700/50"
+                            />
+                            <RunModeCard
+                                checked={toxicityReportOnly}
+                                onChange={onToxicityReportOnlyChange}
+                                icon={<FlaskConical className="w-3.5 h-3.5 text-red-400" />}
+                                title="Toxicity Report Only"
+                                desc="Forces ADMET on all compounds and skips PDB/docking entirely. Fast profiling mode."
+                                activeColor="bg-red-950/30 border-red-700/50"
+                            />
                         </div>
                     </section>
 
-                    <Divider />
+                    <SectionDivider />
 
-                    {/* ── SECTION 2 · Analogue Generation ── */}
-                    <section className={`space-y-6 ${analoguesDisabled ? "opacity-40 pointer-events-none select-none" : ""}`}>
-                        <div className="flex items-center justify-between">
-                            <SectionLabel>Analogue Generation</SectionLabel>
-                            {analoguesDisabled && (
-                                <span className="text-xs text-violet-400">Disabled — Direct Score mode active</span>
+                    {/* ════════════════════════════════
+                        SECTION 2 · Analogue Generation
+                    ════════════════════════════════ */}
+                    <section className={analoguesOff ? "opacity-40 pointer-events-none select-none" : ""}>
+                        <SectionHeader
+                            icon={<Layers className="w-4 h-4" />}
+                            label="Analogue Generation"
+                            aside={analoguesOff && (
+                                <span className="text-[11px] text-violet-400 font-medium">
+                                    Disabled — Direct Score active
+                                </span>
                             )}
-                        </div>
+                        />
+
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                            <div className="space-y-3">
-                                <label className="text-xs font-medium text-gray-300">Number of Analogues</label>
-                                <div className="flex flex-wrap gap-2">
+                            {/* Number of analogues */}
+                            <div>
+                                <FieldLabel hint="More analogues improves coverage but increases compute time.">
+                                    Number of Analogues
+                                </FieldLabel>
+                                <div className="flex flex-wrap gap-1.5 mb-3">
                                     {ANALOGUE_PRESETS.map((val) => (
                                         <button
                                             key={val}
                                             type="button"
                                             onClick={() => onNumAnaloguesChange(val)}
-                                            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${numAnalogues === val
-                                                ? "bg-primary text-white shadow-sm"
-                                                : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+                                            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${numAnalogues === val
+                                                    ? "bg-teal-600 text-white shadow-sm shadow-teal-900/50"
+                                                    : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
                                                 }`}
                                         >
                                             {val}
@@ -310,54 +421,60 @@ export default function AdvancedSettings({
                                     max={10000}
                                     value={numAnalogues}
                                     onChange={(e) => onNumAnaloguesChange(parseInt(e.target.value) || 25)}
-                                    placeholder="Custom number…"
+                                    placeholder="Custom…"
                                     className="input w-full text-sm"
                                 />
-                                <p className="text-xs text-gray-500">Max 10,000 — larger batches increase compute time.</p>
+                                <p className="text-[11px] text-gray-600 mt-2">Max 10,000 — larger batches increase compute time.</p>
                             </div>
 
-                            <div className="space-y-3">
-                                <label className="text-xs font-medium text-gray-300 flex items-center justify-between">
-                                    Lock Core Scaffold (SMARTS)
+                            {/* Scaffold lock */}
+                            <div>
+                                <FieldLabel hint="Every generated analogue must contain this substructure. Leave blank for no lock.">
+                                    Lock Core Scaffold
+                                    <span className="ml-1 text-gray-600 font-normal">(SMARTS)</span>
+                                </FieldLabel>
+                                <div className="relative mb-2">
+                                    <input
+                                        type="text"
+                                        value={lockedScaffoldSmarts}
+                                        onChange={(e) => onLockedScaffoldSmartsChange(e.target.value)}
+                                        placeholder="e.g. c1ccc2cc1C(=O)c1ccccc1N2"
+                                        className="input font-mono text-xs w-full pr-8"
+                                    />
                                     {lockedScaffoldSmarts && (
                                         <button
                                             type="button"
                                             onClick={() => onLockedScaffoldSmartsChange("")}
-                                            className="text-gray-500 hover:text-red-400 transition-colors"
-                                            title="Clear scaffold"
+                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-red-400 transition-colors"
                                         >
                                             <X className="w-3.5 h-3.5" />
                                         </button>
                                     )}
-                                </label>
-                                <input
-                                    type="text"
-                                    value={lockedScaffoldSmarts}
-                                    onChange={(e) => onLockedScaffoldSmartsChange(e.target.value)}
-                                    placeholder="e.g. c1ccc2cc1C(=O)c1ccccc1N2"
-                                    className="input font-mono text-xs w-full"
-                                />
+                                </div>
+
                                 <div className="relative">
                                     <button
                                         type="button"
                                         onClick={() => setScaffoldPresetOpen(!scaffoldPresetOpen)}
-                                        className="text-xs text-primary hover:text-primary-hover flex items-center gap-1 transition-colors"
+                                        className="flex items-center gap-1.5 text-xs text-teal-500 hover:text-teal-400 transition-colors font-medium"
                                     >
-                                        Common scaffold presets <ChevronDown className="w-3 h-3" />
+                                        Common presets
+                                        <ChevronDown className={`w-3 h-3 transition-transform ${scaffoldPresetOpen ? "rotate-180" : ""}`} />
                                     </button>
+
                                     {scaffoldPresetOpen && (
-                                        <div className="absolute top-full left-0 mt-2 w-full max-w-sm bg-gray-850 border border-gray-700 rounded-xl shadow-2xl z-20 overflow-hidden">
+                                        <div className="absolute top-full left-0 mt-2 w-full max-w-sm bg-gray-900 border border-gray-700/80 rounded-2xl shadow-2xl shadow-black/40 z-20 overflow-hidden">
                                             <div className="p-1.5 space-y-0.5">
                                                 {SCAFFOLD_PRESETS.map((p) => (
                                                     <button
                                                         key={p.label}
                                                         type="button"
                                                         onClick={() => { onLockedScaffoldSmartsChange(p.smarts); setScaffoldPresetOpen(false); }}
-                                                        className="w-full text-left px-3 py-2.5 rounded-lg hover:bg-gray-700/70 transition-colors group"
+                                                        className="w-full text-left px-3.5 py-3 rounded-xl hover:bg-gray-800/70 transition-colors group"
                                                     >
                                                         <p className="text-sm font-semibold text-gray-200">{p.label}</p>
                                                         <p className="text-xs text-gray-500 mt-0.5">{p.hint}</p>
-                                                        <p className="text-xs font-mono text-gray-600 group-hover:text-primary transition-colors mt-0.5 truncate">{p.smarts}</p>
+                                                        <p className="text-[11px] font-mono text-gray-700 group-hover:text-teal-500 transition-colors mt-1 truncate">{p.smarts}</p>
                                                     </button>
                                                 ))}
                                             </div>
@@ -368,57 +485,119 @@ export default function AdvancedSettings({
                         </div>
                     </section>
 
-                    <Divider />
+                    <SectionDivider />
 
-                    {/* ── SECTION 3 · Drug-likeness ── */}
-                    <section className="space-y-6">
-                        <SectionLabel>Drug-likeness Limits</SectionLabel>
+                    {/* ════════════════════════════════
+                        SECTION 3 · Drug-likeness
+                    ════════════════════════════════ */}
+                    <section>
+                        <SectionHeader
+                            icon={<Activity className="w-4 h-4" />}
+                            label="Drug-likeness Limits"
+                        />
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <div className="space-y-3">
-                                <label className="text-xs font-medium text-gray-300">Molecular Weight Range (Da)</label>
+
+                            {/* MW range */}
+                            <div>
+                                <FieldLabel hint="Lipinski RO5 default is 200–500 Da.">
+                                    Molecular Weight Range (Da)
+                                </FieldLabel>
                                 <div className="flex items-center gap-2">
-                                    <input type="number" value={mwMin} onChange={(e) => onMwMinChange(Number(e.target.value))} className="input w-full text-sm" placeholder="Min" />
-                                    <span className="text-gray-600 shrink-0">–</span>
-                                    <input type="number" value={mwMax} onChange={(e) => onMwMaxChange(Number(e.target.value))} className="input w-full text-sm" placeholder="Max" />
+                                    <input
+                                        type="number"
+                                        value={mwMin}
+                                        onChange={(e) => onMwMinChange(Number(e.target.value))}
+                                        className="input w-full text-sm"
+                                        placeholder="Min"
+                                    />
+                                    <span className="text-gray-600 shrink-0 text-sm">–</span>
+                                    <input
+                                        type="number"
+                                        value={mwMax}
+                                        onChange={(e) => onMwMaxChange(Number(e.target.value))}
+                                        className="input w-full text-sm"
+                                        placeholder="Max"
+                                    />
                                 </div>
-                                <p className="text-xs text-gray-500">RO5 default: 200–500 Da</p>
+                                <p className="text-[11px] text-gray-600 mt-2">RO5 default: 200–500 Da</p>
                             </div>
 
-                            <div className="space-y-3">
-                                <label className="text-xs font-medium text-gray-300">Lipinski Violation Tolerance</label>
-                                <select
-                                    value={violationSelectValue}
-                                    onChange={(e) => handleViolationChange(e.target.value)}
-                                    className="input w-full text-sm"
-                                >
+                            {/* Lipinski violations */}
+                            <div>
+                                <FieldLabel hint="Number of Lipinski RO5 criteria a compound may break and still pass.">
+                                    Lipinski Violations
+                                </FieldLabel>
+                                <div className="space-y-1.5">
                                     {VIOLATION_OPTIONS.map((opt) => (
-                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                        <label
+                                            key={opt.value}
+                                            className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl border cursor-pointer transition-all ${violationVal === opt.value
+                                                    ? "border-teal-600/60 bg-teal-950/25"
+                                                    : "border-gray-800 hover:border-gray-700 hover:bg-gray-800/30"
+                                                }`}
+                                        >
+                                            <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${violationVal === opt.value
+                                                    ? "border-teal-500 bg-teal-500"
+                                                    : "border-gray-600"
+                                                }`}>
+                                                {violationVal === opt.value && (
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-white" />
+                                                )}
+                                            </span>
+                                            <input
+                                                type="radio"
+                                                name="lipinskiViolation"
+                                                value={opt.value}
+                                                checked={violationVal === opt.value}
+                                                onChange={() => handleViolation(opt.value)}
+                                                className="sr-only"
+                                            />
+                                            <div>
+                                                <p className={`text-xs font-semibold ${violationVal === opt.value ? "text-gray-100" : "text-gray-400"}`}>
+                                                    {opt.label}
+                                                </p>
+                                                <p className="text-[11px] text-gray-600 mt-0.5">{opt.sub}</p>
+                                            </div>
+                                        </label>
                                     ))}
-                                </select>
+                                </div>
                             </div>
 
-                            <div className="space-y-3">
-                                <label className="text-xs font-medium text-gray-300">Solubility Filter (logS)</label>
-                                <div className="space-y-2">
+                            {/* Solubility */}
+                            <div>
+                                <FieldLabel hint="logS-based ESOL filter applied at analogue generation time.">
+                                    Solubility Filter (logS)
+                                </FieldLabel>
+                                <div className="space-y-1.5">
                                     {SOLUBILITY_OPTIONS.map((opt) => (
                                         <label
                                             key={opt.value}
-                                            className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-all ${solubilityFilter === opt.value
-                                                ? "border-primary/50 bg-primary/10"
-                                                : "border-gray-800 bg-gray-900/20 hover:border-gray-700"
+                                            className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl border cursor-pointer transition-all ${solubilityFilter === opt.value
+                                                    ? "border-teal-600/60 bg-teal-950/25"
+                                                    : "border-gray-800 hover:border-gray-700 hover:bg-gray-800/30"
                                                 }`}
                                         >
+                                            <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${solubilityFilter === opt.value
+                                                    ? "border-teal-500 bg-teal-500"
+                                                    : "border-gray-600"
+                                                }`}>
+                                                {solubilityFilter === opt.value && (
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-white" />
+                                                )}
+                                            </span>
                                             <input
                                                 type="radio"
                                                 name="solubilityFilter"
                                                 value={opt.value}
                                                 checked={solubilityFilter === opt.value}
                                                 onChange={() => onSolubilityFilterChange(opt.value)}
-                                                className="text-primary bg-gray-900 border-gray-600 focus:ring-primary"
+                                                className="sr-only"
                                             />
                                             <div>
-                                                <p className={`text-sm font-medium ${solubilityFilter === opt.value ? "text-gray-100" : "text-gray-300"}`}>{opt.label}</p>
-                                                <p className="text-xs text-gray-500 mt-0.5">{opt.desc}</p>
+                                                <p className={`text-xs font-semibold ${solubilityFilter === opt.value ? "text-gray-100" : "text-gray-400"}`}>
+                                                    {opt.label}
+                                                </p>
+                                                <p className="text-[11px] text-gray-600 mt-0.5">{opt.sub}</p>
                                             </div>
                                         </label>
                                     ))}
@@ -427,96 +606,149 @@ export default function AdvancedSettings({
                         </div>
                     </section>
 
-                    <Divider />
+                    <SectionDivider />
 
-                    {/* ── SECTION 4 · ADMET Tuning ── */}
-                    <section className="space-y-6">
-                        <div className="flex items-center gap-2.5">
-                            <ShieldAlert className="w-4 h-4 text-emerald-400" />
-                            <SectionLabel>ADMET Threshold Tuning</SectionLabel>
-                        </div>
+                    {/* ════════════════════════════════
+                        SECTION 4 · ADMET Tuning
+                    ════════════════════════════════ */}
+                    <section>
+                        <SectionHeader
+                            icon={<ShieldAlert className="w-4 h-4 text-teal-500" />}
+                            label="ADMET Threshold Tuning"
+                        />
 
-                        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-                            {/* Preset column */}
-                            <div className="lg:col-span-2 space-y-2">
-                                <p className="text-xs font-medium text-gray-300 mb-3">Target Profile Preset</p>
-                                {ADMET_PRESETS.map((preset) => (
-                                    <button
-                                        key={preset.value}
-                                        type="button"
-                                        onClick={() => handleAdmetPresetChange(preset.value)}
-                                        className={`w-full text-left flex items-center gap-3 px-3.5 py-3 rounded-xl border transition-all ${admetConfig.preset === preset.value
-                                            ? "bg-primary/10 border-primary/60 text-white"
-                                            : "bg-gray-900/30 border-gray-800 text-gray-400 hover:border-gray-600 hover:bg-gray-800/40"
-                                            }`}
-                                    >
-                                        <span className={admetConfig.preset === preset.value ? "text-primary" : "text-gray-500"}>
-                                            {preset.icon}
-                                        </span>
-                                        <div>
-                                            <p className="text-sm font-semibold leading-tight">{preset.label}</p>
-                                            <p className="text-xs mt-0.5 opacity-60 leading-snug">{preset.desc}</p>
-                                        </div>
-                                    </button>
-                                ))}
+                        <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr] gap-5">
+
+                            {/* Preset list */}
+                            <div className="space-y-2">
+                                <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-600 mb-3">
+                                    Target Profile
+                                </p>
+                                {ADMET_PRESETS.map((preset) => {
+                                    const isActive = admetConfig.preset === preset.value;
+                                    return (
+                                        <button
+                                            key={preset.value}
+                                            type="button"
+                                            onClick={() => handleAdmetPreset(preset.value)}
+                                            className={`w-full text-left flex items-center gap-3 px-3.5 py-3 rounded-2xl border transition-all ${isActive
+                                                    ? PRESET_ACCENT[preset.accent]
+                                                    : "bg-gray-900/20 border-gray-800 text-gray-400 hover:border-gray-600 hover:bg-gray-800/30 hover:text-gray-300"
+                                                }`}
+                                        >
+                                            <span className={isActive ? "" : "text-gray-600 [&_svg]:text-gray-600"}>
+                                                {preset.icon}
+                                            </span>
+                                            <div className="min-w-0">
+                                                <p className="text-xs font-bold leading-tight">{preset.label}</p>
+                                                <p className="text-[11px] mt-0.5 opacity-60 leading-snug truncate">{preset.desc}</p>
+                                            </div>
+                                        </button>
+                                    );
+                                })}
                             </div>
 
-                            {/* Sliders column */}
-                            <div className="lg:col-span-3 rounded-xl border border-gray-800 bg-gray-900/30 p-5 space-y-7">
-                                <div>
-                                    <p className="text-xs font-semibold uppercase tracking-widest text-red-400/80 mb-1">Hard-Fail Limits</p>
-                                    <p className="text-xs text-gray-500 leading-relaxed">
-                                        Compounds exceeding these values are removed from the pipeline entirely.
-                                        Switch to <span className="text-gray-400 font-medium">Custom</span> preset to save manual changes.
-                                    </p>
+                            {/* Sliders panel */}
+                            <div className="rounded-2xl border border-gray-700/60 bg-gray-900/30 p-5 space-y-8">
+                                {/* Panel header */}
+                                <div className="flex items-start justify-between gap-4">
+                                    <div>
+                                        <div className="flex items-center gap-2 mb-1.5">
+                                            <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+                                            <p className="text-xs font-bold uppercase tracking-widest text-red-400/90">
+                                                Hard-Fail Limits
+                                            </p>
+                                        </div>
+                                        <p className="text-[11px] text-gray-500 leading-relaxed max-w-md">
+                                            Compounds exceeding these values are{" "}
+                                            <span className="text-gray-300 font-medium">removed from the pipeline entirely</span>.
+                                            {" "}Switch to{" "}
+                                            <button
+                                                type="button"
+                                                onClick={() => handleAdmetPreset("custom")}
+                                                className="text-amber-400 hover:text-amber-300 transition-colors font-semibold underline underline-offset-2"
+                                            >
+                                                Custom
+                                            </button>
+                                            {" "}to save manual changes.
+                                        </p>
+                                    </div>
+                                    {admetConfig.preset !== "balanced" && (
+                                        <span className={`shrink-0 text-[11px] font-bold px-2.5 py-1 rounded-lg border ${PRESET_ACCENT[ADMET_PRESETS.find((p) => p.value === admetConfig.preset)?.accent ?? "teal"]}`}>
+                                            {admetConfig.preset}
+                                        </span>
+                                    )}
                                 </div>
 
-                                {/* hERG */}
+                                {/* hERG slider */}
                                 <div className="space-y-3">
                                     <div className="flex items-start justify-between gap-4">
                                         <div>
-                                            <p className="text-sm font-semibold text-gray-100">hERG Inhibition</p>
-                                            <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">Cardiac arrhythmia / QT prolongation risk. Lower is safer.</p>
+                                            <p className="text-sm font-bold text-gray-100">hERG Inhibition</p>
+                                            <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">
+                                                Cardiac arrhythmia / QT prolongation risk.{" "}
+                                                <span className="text-teal-500">Lower is safer.</span>
+                                            </p>
                                         </div>
-                                        <span className="shrink-0 text-xs font-mono font-semibold text-red-400 bg-red-950/40 border border-red-900/50 px-2.5 py-1 rounded-lg">
-                                            Fail &gt; {(admetConfig.herg_inhibition?.severity_high ?? 0.85).toFixed(2)}
-                                        </span>
+                                        <div className="shrink-0 text-right">
+                                            <p className="text-[11px] text-gray-600 mb-1">Fail if above</p>
+                                            <span className="text-sm font-mono font-bold text-red-400 bg-red-950/50 border border-red-900/50 px-2.5 py-1 rounded-lg">
+                                                {hergVal.toFixed(2)}
+                                            </span>
+                                        </div>
                                     </div>
-                                    <div className="space-y-1.5">
+                                    <div className="space-y-2">
                                         <input
-                                            type="range" min={0.5} max={0.95} step={0.05}
-                                            value={admetConfig.herg_inhibition?.severity_high ?? 0.85}
-                                            onChange={(e) => handleAdmetThresholdChange("herg_inhibition", "severity_high", parseFloat(e.target.value))}
-                                            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary"
+                                            type="range"
+                                            min={0.5}
+                                            max={0.95}
+                                            step={0.05}
+                                            value={hergVal}
+                                            onChange={(e) => handleAdmetSlider("herg_inhibition", "severity_high", parseFloat(e.target.value))}
+                                            style={sliderFillStyle(hergVal, 0.5, 0.95, "#14b8a6")}
+                                            className="w-full h-2 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:shadow-black/40 [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-teal-500"
                                         />
-                                        <div className="flex justify-between text-xs text-gray-600">
-                                            <span>Strict (0.50)</span>
-                                            <span>Relaxed (0.95)</span>
+                                        <div className="flex justify-between text-[11px] text-gray-600">
+                                            <span>0.50 · Strict</span>
+                                            <span>0.95 · Relaxed</span>
                                         </div>
                                     </div>
                                 </div>
 
-                                {/* Hepatotoxicity */}
+                                {/* Divider between sliders */}
+                                <div className="h-px bg-gray-800" />
+
+                                {/* Hepatotoxicity slider */}
                                 <div className="space-y-3">
                                     <div className="flex items-start justify-between gap-4">
                                         <div>
-                                            <p className="text-sm font-semibold text-gray-100">Hepatotoxicity (DILI)</p>
-                                            <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">Drug-induced liver injury probability. Lower is safer.</p>
+                                            <p className="text-sm font-bold text-gray-100">Hepatotoxicity (DILI)</p>
+                                            <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">
+                                                Drug-induced liver injury probability.{" "}
+                                                <span className="text-teal-500">Lower is safer.</span>
+                                            </p>
                                         </div>
-                                        <span className="shrink-0 text-xs font-mono font-semibold text-red-400 bg-red-950/40 border border-red-900/50 px-2.5 py-1 rounded-lg">
-                                            Fail &gt; {(admetConfig.hepatotoxicity?.severity_high ?? 0.85).toFixed(2)}
-                                        </span>
+                                        <div className="shrink-0 text-right">
+                                            <p className="text-[11px] text-gray-600 mb-1">Fail if above</p>
+                                            <span className="text-sm font-mono font-bold text-red-400 bg-red-950/50 border border-red-900/50 px-2.5 py-1 rounded-lg">
+                                                {hepatoVal.toFixed(2)}
+                                            </span>
+                                        </div>
                                     </div>
-                                    <div className="space-y-1.5">
+                                    <div className="space-y-2">
                                         <input
-                                            type="range" min={0.5} max={0.95} step={0.05}
-                                            value={admetConfig.hepatotoxicity?.severity_high ?? 0.85}
-                                            onChange={(e) => handleAdmetThresholdChange("hepatotoxicity", "severity_high", parseFloat(e.target.value))}
-                                            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary"
+                                            type="range"
+                                            min={0.5}
+                                            max={0.95}
+                                            step={0.05}
+                                            value={hepatoVal}
+                                            onChange={(e) => handleAdmetSlider("hepatotoxicity", "severity_high", parseFloat(e.target.value))}
+                                            style={sliderFillStyle(hepatoVal, 0.5, 0.95, "#14b8a6")}
+                                            className="w-full h-2 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:shadow-black/40 [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-teal-500"
                                         />
-                                        <div className="flex justify-between text-xs text-gray-600">
-                                            <span>Strict (0.50)</span>
-                                            <span>Relaxed (0.95)</span>
+                                        <div className="flex justify-between text-[11px] text-gray-600">
+                                            <span>0.50 · Strict</span>
+                                            <span>0.95 · Relaxed</span>
                                         </div>
                                     </div>
                                 </div>
@@ -524,15 +756,22 @@ export default function AdvancedSettings({
                         </div>
                     </section>
 
-                    <Divider />
+                    <SectionDivider />
 
-                    {/* ── SECTION 5 · Pipeline Steps ── */}
-                    <section className="space-y-4">
-                        <div className="flex items-center justify-between">
-                            <SectionLabel>Active Pipeline Steps</SectionLabel>
-                            {toxOnly && <span className="text-xs text-red-400">Overridden by Toxicity Report mode</span>}
-                        </div>
-                        <div className={`grid grid-cols-1 md:grid-cols-2 gap-3 ${toxOnly ? "opacity-40 pointer-events-none select-none" : ""}`}>
+                    {/* ════════════════════════════════
+                        SECTION 5 · Pipeline Steps
+                    ════════════════════════════════ */}
+                    <section>
+                        <SectionHeader
+                            icon={<Layers className="w-4 h-4" />}
+                            label="Active Pipeline Steps"
+                            aside={toxOnly && (
+                                <span className="text-[11px] text-red-400 font-medium">
+                                    Overridden by Toxicity Report mode
+                                </span>
+                            )}
+                        />
+                        <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 ${toxOnly ? "opacity-40 pointer-events-none select-none" : ""}`}>
                             {STEPS.map((step) => {
                                 let isChecked = pipelineSteps[step.key];
                                 if (toxOnly) {
@@ -542,26 +781,43 @@ export default function AdvancedSettings({
                                 return (
                                     <label
                                         key={step.key}
-                                        className={`flex items-start gap-3.5 p-4 rounded-xl border transition-all ${isChecked
-                                            ? "bg-gray-800/50 border-gray-700"
-                                            : "bg-transparent border-gray-800/60 hover:bg-gray-900/50"
+                                        className={`flex items-start gap-3.5 p-4 rounded-2xl border transition-all ${isChecked
+                                                ? "bg-gray-800/50 border-gray-700"
+                                                : "bg-transparent border-gray-800/50 hover:border-gray-700 hover:bg-gray-800/20"
                                             } ${step.locked ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
                                     >
                                         <div className="pt-0.5">
-                                            <input
-                                                type="checkbox"
-                                                disabled={step.locked || toxOnly}
-                                                checked={isChecked}
-                                                onChange={() => toggleStep(step.key)}
-                                                className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-primary focus:ring-primary focus:ring-offset-gray-900 disabled:opacity-50"
-                                            />
+                                            <span className={`flex w-4 h-4 rounded-md border-2 items-center justify-center transition-all ${isChecked
+                                                    ? "bg-teal-600 border-teal-600"
+                                                    : "bg-gray-800 border-gray-600"
+                                                }`}>
+                                                {isChecked && (
+                                                    <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 10 10" fill="none">
+                                                        <path d="M2 5l2.5 2.5 3.5-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                                    </svg>
+                                                )}
+                                            </span>
                                         </div>
+                                        <input
+                                            type="checkbox"
+                                            disabled={step.locked || toxOnly}
+                                            checked={isChecked}
+                                            onChange={() => toggleStep(step.key)}
+                                            className="sr-only"
+                                        />
                                         <div>
-                                            <p className="text-sm font-semibold text-gray-100">
+                                            <p className={`text-sm font-semibold leading-tight flex items-center gap-1.5 ${isChecked ? "text-gray-100" : "text-gray-400"}`}>
+                                                <span className={isChecked ? "text-teal-500" : "text-gray-600"}>
+                                                    {step.icon}
+                                                </span>
                                                 {step.label}
-                                                {step.locked && <span className="ml-2 text-xs text-gray-500 font-normal uppercase tracking-wide">Required</span>}
+                                                {step.locked && (
+                                                    <span className="text-[10px] text-gray-600 font-bold uppercase tracking-wide border border-gray-700 rounded px-1 py-0.5 ml-1">
+                                                        Required
+                                                    </span>
+                                                )}
                                             </p>
-                                            <p className="text-xs text-gray-500 mt-1 leading-relaxed">{step.desc}</p>
+                                            <p className="text-[11px] text-gray-600 mt-1.5 leading-relaxed">{step.desc}</p>
                                         </div>
                                     </label>
                                 );
@@ -569,23 +825,32 @@ export default function AdvancedSettings({
                         </div>
                     </section>
 
-                    <Divider />
+                    <SectionDivider />
 
-                    {/* ── SECTION 6 · Docking Settings ── */}
-                    <section className={`space-y-6 ${toxOnly || !pipelineSteps.docking ? "opacity-40 pointer-events-none select-none" : ""}`}>
-                        <SectionLabel>Docking Settings</SectionLabel>
+                    {/* ════════════════════════════════
+                        SECTION 6 · Docking Settings
+                    ════════════════════════════════ */}
+                    <section className={toxOnly || !pipelineSteps.docking ? "opacity-40 pointer-events-none select-none" : ""}>
+                        <SectionHeader
+                            icon={<Target className="w-4 h-4" />}
+                            label="Docking Settings"
+                        />
+
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                            <div className="space-y-4">
-                                <label className="text-xs font-medium text-gray-300">Max Compounds to Dock (Top N)</label>
-                                <div className="flex flex-wrap gap-2">
+                            {/* Compounds to dock */}
+                            <div>
+                                <FieldLabel hint="Number of compounds from the ML pre-filter sent to AutoDock Vina.">
+                                    Max Compounds to Dock (Top N)
+                                </FieldLabel>
+                                <div className="flex flex-wrap gap-1.5 mb-4">
                                     {DOCKING_COUNT_PRESETS.map((val) => (
                                         <button
                                             key={val}
                                             type="button"
                                             onClick={() => { setDockingCountCustom(false); onMaxDockingCompoundsChange(val); }}
-                                            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${!dockingCountCustom && maxDockingCompounds === val
-                                                ? "bg-primary text-white shadow-sm"
-                                                : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+                                            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${!dockingCountCustom && maxDockingCompounds === val
+                                                    ? "bg-teal-600 text-white shadow-sm shadow-teal-900/50"
+                                                    : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
                                                 }`}
                                         >
                                             Top {val}
@@ -594,9 +859,9 @@ export default function AdvancedSettings({
                                     <button
                                         type="button"
                                         onClick={() => setDockingCountCustom(true)}
-                                        className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${dockingCountCustom || isCustomCount
-                                            ? "bg-primary text-white shadow-sm"
-                                            : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+                                        className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${dockingCountCustom || isCustomCount
+                                                ? "bg-teal-600 text-white shadow-sm shadow-teal-900/50"
+                                                : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
                                             }`}
                                     >
                                         Custom
@@ -604,52 +869,78 @@ export default function AdvancedSettings({
                                 </div>
 
                                 {(dockingCountCustom || isCustomCount) && (
-                                    <div className="flex items-center gap-4">
+                                    <div className="flex items-center gap-4 mb-4">
                                         <input
-                                            type="range" min={1} max={50}
+                                            type="range"
+                                            min={1}
+                                            max={50}
                                             value={maxDockingCompounds}
                                             onChange={(e) => onMaxDockingCompoundsChange(parseInt(e.target.value))}
-                                            className="flex-1 accent-primary"
+                                            style={sliderFillStyle(maxDockingCompounds, 1, 50, "#14b8a6")}
+                                            className="flex-1 h-2 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:shadow-black/40 [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-teal-500"
                                         />
-                                        <span className="text-sm font-mono font-semibold text-gray-200 w-8 text-right">{maxDockingCompounds}</span>
+                                        <span className="text-sm font-mono font-bold text-teal-400 w-8 text-right shrink-0">
+                                            {maxDockingCompounds}
+                                        </span>
                                     </div>
                                 )}
 
-                                <div className={`flex items-start gap-3 p-3.5 rounded-xl border text-xs ${dockingTimeSev === "heavy"
-                                    ? "border-red-900/50 bg-red-950/20 text-red-400"
-                                    : dockingTimeSev === "warn"
-                                        ? "border-yellow-900/50 bg-yellow-950/20 text-yellow-400"
-                                        : "border-gray-800 bg-gray-900/30 text-gray-400"
+                                {/* Compute estimate */}
+                                <div className={`flex items-start gap-3 px-4 py-3 rounded-xl border text-xs ${dockTimeSev === "heavy"
+                                        ? "border-red-900/50 bg-red-950/20 text-red-400"
+                                        : dockTimeSev === "warn"
+                                            ? "border-yellow-900/50 bg-yellow-950/20 text-yellow-400"
+                                            : "border-gray-700/60 bg-gray-900/30 text-gray-400"
                                     }`}>
                                     <Clock className="w-4 h-4 shrink-0 mt-0.5" />
                                     <div>
-                                        <p className="font-semibold">Estimated compute: {dockingTimeStr}</p>
-                                        <p className="mt-0.5 opacity-75">~{activeSpeed.minPerCompound} min/compound · {maxDockingCompounds} compound{maxDockingCompounds !== 1 ? "s" : ""}</p>
+                                        <p className="font-bold">Estimated compute: {dockTimeStr}</p>
+                                        <p className="mt-0.5 opacity-70">
+                                            ~{activeSpeed.minPerCompound} min/compound · {maxDockingCompounds} compound{maxDockingCompounds !== 1 ? "s" : ""}
+                                        </p>
                                     </div>
                                 </div>
                             </div>
 
-                            <div className="space-y-3">
-                                <label className="text-xs font-medium text-gray-300">Vina Exhaustiveness</label>
+                            {/* Vina exhaustiveness */}
+                            <div>
+                                <FieldLabel hint="Higher exhaustiveness increases accuracy at the cost of compute time.">
+                                    Vina Exhaustiveness
+                                </FieldLabel>
                                 <div className="space-y-2">
                                     {DOCKING_SPEEDS.map((speed) => (
                                         <label
                                             key={speed.value}
-                                            className={`flex items-center justify-between px-4 py-3 rounded-xl border cursor-pointer transition-all ${dockingSpeed === speed.value
-                                                ? "bg-primary/10 border-primary/60 text-white"
-                                                : "bg-gray-800/30 border-gray-700/60 text-gray-300 hover:bg-gray-800 hover:border-gray-600"
+                                            className={`flex items-center justify-between px-4 py-3.5 rounded-2xl border cursor-pointer transition-all ${dockingSpeed === speed.value
+                                                    ? "bg-teal-950/30 border-teal-600/60 text-white"
+                                                    : "bg-gray-800/20 border-gray-700/50 text-gray-400 hover:bg-gray-800/40 hover:border-gray-600"
                                                 }`}
                                         >
                                             <div className="flex items-center gap-3">
+                                                <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${dockingSpeed === speed.value ? "border-teal-500 bg-teal-500" : "border-gray-600"
+                                                    }`}>
+                                                    {dockingSpeed === speed.value && (
+                                                        <span className="w-1.5 h-1.5 rounded-full bg-white" />
+                                                    )}
+                                                </span>
                                                 <input
-                                                    type="radio" name="dockingSpeed" value={speed.value}
+                                                    type="radio"
+                                                    name="dockingSpeed"
+                                                    value={speed.value}
                                                     checked={dockingSpeed === speed.value}
                                                     onChange={(e) => onDockingSpeedChange(e.target.value as DockingSpeed)}
-                                                    className="text-primary focus:ring-primary bg-gray-900 border-gray-600"
+                                                    className="sr-only"
                                                 />
-                                                <span className="text-sm font-semibold">{speed.label}</span>
+                                                <div>
+                                                    <p className="text-sm font-bold">{speed.label}</p>
+                                                    <p className={`text-[11px] mt-0.5 font-mono ${dockingSpeed === speed.value ? "text-teal-400/70" : "text-gray-600"}`}>
+                                                        exhaustiveness{speed.tag}
+                                                    </p>
+                                                </div>
                                             </div>
-                                            <span className="text-xs text-gray-500 font-mono">{speed.desc}</span>
+                                            <span className={`text-xs font-semibold ${dockingSpeed === speed.value ? "text-teal-300" : "text-gray-600"}`}>
+                                                {speed.detail}
+                                            </span>
                                         </label>
                                     ))}
                                 </div>

@@ -6,7 +6,8 @@ import {
     FlaskConical, Activity, Dna, GitBranch, Info,
     AlertTriangle, AlertCircle, Lightbulb,
     Download, Loader2, BookOpen, Layers, Shield,
-    CheckCircle2,
+    CheckCircle2, Clock, Thermometer, ArrowRight,
+    FileText, Percent, Beaker, TestTube,
 } from "lucide-react";
 import type { CompoundResult, ScoreBreakdown, ADMETFlagDetail, DockingFileType } from "@/lib/api";
 import {
@@ -16,8 +17,7 @@ import {
 } from "@/lib/api";
 
 
-// ── Extended ADMET types ───────────────────────────────────────────────────────
-// These live here until api.ts is updated to include them from the backend schema.
+// ── Extended ADMET types ──────────────────────────────────────────────────────
 
 interface ADMETNarrativeBlock {
     title: string;
@@ -41,7 +41,6 @@ interface ADMETEndpointValue {
 
 type OverallRisk = "low" | "moderate" | "high";
 
-// Augmented type — works with old backend (new fields optional) and new backend
 interface ExtendedADMET {
     passed: boolean;
     overall_risk?: OverallRisk;
@@ -56,6 +55,38 @@ interface ExtendedADMET {
     narrative?: ADMETNarrativeBlock[];
     endpoint_table?: ADMETEndpointValue[];
     extra_properties?: Record<string, number>;
+}
+
+
+// ── Extended Retrosynthesis types ─────────────────────────────────────────────
+
+interface ExtendedRetrosynthesisStep {
+    step_number: number;
+    reaction_smarts: string;
+    reaction_name?: string | null;
+    reaction_type?: string | null;
+    starting_materials: string[];
+    product_smiles?: string | null;
+    schematic?: string | null;
+    reagents?: string[];
+    solvents?: string[];
+    conditions?: string | null;
+    temperature?: string | null;
+    duration?: string | null;
+    yield_estimate?: string | null;
+    protocol_text?: string | null;
+    confidence: number;
+}
+
+interface ExtendedRetrosynthesisResult {
+    feasible: boolean;
+    num_steps: number;
+    sa_score?: number;
+    route: ExtendedRetrosynthesisStep[];
+    complexity_score: number;
+    difficulty_label?: string;
+    synthesis_summary?: string | null;
+    estimated_total_yield?: string | null;
 }
 
 
@@ -82,6 +113,26 @@ const BREAKDOWN_TIPS: Record<string, string> = {
     solubility: "Max 10pts. High=10, Medium=7, Low=3, Very Low=0 + global penalty applied. Poor solubility = drug can't dissolve in blood.",
     binding_prefilter: "Max 10pts. GNN-predicted binding affinity × model confidence. Lower confidence = fewer points even if affinity is high.",
     synthesis_ease: "Max 10pts. Based on SA Score complexity. Simpler molecules score higher — complexity < 15 gets near-full points.",
+};
+
+const DIFFICULTY_STYLES: Record<string, string> = {
+    easy: "text-emerald-400",
+    moderate: "text-yellow-400",
+    hard: "text-orange-400",
+    infeasible: "text-red-400",
+    unknown: "text-gray-500",
+};
+
+const REACTION_TYPE_LABELS: Record<string, string> = {
+    transition_metal_catalysis: "Transition Metal Catalysis",
+    condensation: "Condensation",
+    condensation_reduction: "Condensation / Reduction",
+    nucleophilic_substitution: "Nucleophilic Substitution",
+    cyclisation: "Cyclisation",
+    multicomponent: "Multicomponent",
+    heteroatom_coupling: "Heteroatom Coupling",
+    carbon_coupling: "C–C Coupling",
+    fgi: "Functional Group Interconversion",
 };
 
 
@@ -289,15 +340,14 @@ const EndpointTable = ({ endpoints }: { endpoints: ADMETEndpointValue[] }) => {
 
     return (
         <div>
-            {/* Category filter pills */}
             <div className="flex flex-wrap gap-1.5 mb-3">
                 {presentCategories.map(cat => (
                     <button
                         key={cat}
                         onClick={() => setActiveCategory(cat)}
                         className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider border transition-colors ${activeCategory === cat
-                                ? "bg-gray-700 border-gray-500 text-gray-200"
-                                : "border-gray-700 text-gray-500 hover:border-gray-600 hover:text-gray-400"
+                            ? "bg-gray-700 border-gray-500 text-gray-200"
+                            : "border-gray-700 text-gray-500 hover:border-gray-600 hover:text-gray-400"
                             }`}
                     >
                         {cat === "all" ? "All" : CATEGORY_LABELS[cat]}
@@ -305,7 +355,6 @@ const EndpointTable = ({ endpoints }: { endpoints: ADMETEndpointValue[] }) => {
                 ))}
             </div>
 
-            {/* Table */}
             <div className="overflow-x-auto rounded-lg border border-gray-700">
                 <table className="w-full text-xs">
                     <thead>
@@ -318,14 +367,14 @@ const EndpointTable = ({ endpoints }: { endpoints: ADMETEndpointValue[] }) => {
                         </tr>
                     </thead>
                     <tbody>
-                        {filtered.map((ep, i) => (
+                        {filtered.map((ep) => (
                             <tr
                                 key={ep.key}
                                 className={`border-b border-gray-800 last:border-0 transition-colors ${ep.triggered
-                                        ? ep.severity === "high"
-                                            ? "bg-red-950/20 hover:bg-red-950/30"
-                                            : "bg-yellow-950/10 hover:bg-yellow-950/20"
-                                        : "hover:bg-gray-800/40"
+                                    ? ep.severity === "high"
+                                        ? "bg-red-950/20 hover:bg-red-950/30"
+                                        : "bg-yellow-950/10 hover:bg-yellow-950/20"
+                                    : "hover:bg-gray-800/40"
                                     }`}
                                 title={ep.interpretation ?? ""}
                             >
@@ -385,13 +434,9 @@ const EndpointTable = ({ endpoints }: { endpoints: ADMETEndpointValue[] }) => {
 };
 
 
-// ── Full ADMET Report (narrative + endpoint table + decision basis) ─────────────
+// ── Full ADMET Report ─────────────────────────────────────────────────────────
 
-interface FullADMETReportProps {
-    admet: ExtendedADMET;
-}
-
-const FullADMETReport = ({ admet }: FullADMETReportProps) => {
+const FullADMETReport = ({ admet }: { admet: ExtendedADMET }) => {
     const [endpointTableOpen, setEndpointTableOpen] = useState(false);
 
     const hasNarrative = (admet.narrative?.length ?? 0) > 0;
@@ -409,8 +454,6 @@ const FullADMETReport = ({ admet }: FullADMETReportProps) => {
             </div>
 
             <div className="p-3 space-y-4">
-
-                {/* Narrative blocks */}
                 {hasNarrative && (
                     <div className="space-y-2">
                         {admet.narrative!.map((block, i) => (
@@ -419,7 +462,6 @@ const FullADMETReport = ({ admet }: FullADMETReportProps) => {
                     </div>
                 )}
 
-                {/* Endpoint table */}
                 {hasEndpointTable && (
                     <div>
                         <button
@@ -428,12 +470,8 @@ const FullADMETReport = ({ admet }: FullADMETReportProps) => {
                         >
                             <div className="flex items-center gap-1.5">
                                 <Layers className="w-3.5 h-3.5 text-gray-500" />
-                                <span className="font-medium uppercase tracking-wider">
-                                    Full Endpoint Table
-                                </span>
-                                <span className="text-gray-600">
-                                    ({admet.endpoint_table!.length} properties)
-                                </span>
+                                <span className="font-medium uppercase tracking-wider">Full Endpoint Table</span>
+                                <span className="text-gray-600">({admet.endpoint_table!.length} properties)</span>
                             </div>
                             {endpointTableOpen
                                 ? <ChevronUp className="w-3.5 h-3.5 text-gray-600" />
@@ -449,7 +487,6 @@ const FullADMETReport = ({ admet }: FullADMETReportProps) => {
                     </div>
                 )}
 
-                {/* Decision basis */}
                 {hasDecisionBasis && (
                     <div>
                         <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-1.5">Decision Basis</p>
@@ -464,6 +501,311 @@ const FullADMETReport = ({ admet }: FullADMETReportProps) => {
                     </div>
                 )}
             </div>
+        </div>
+    );
+};
+
+
+// ── Retrosynthesis Step Card ──────────────────────────────────────────────────
+
+const RetroStepCard = ({ step }: { step: ExtendedRetrosynthesisStep }) => {
+    const [open, setOpen] = useState(false);
+    const [protocolOpen, setProtocolOpen] = useState(false);
+
+    const hasDetails = !!(
+        step.reaction_name || step.reagents?.length || step.conditions ||
+        step.temperature || step.duration || step.yield_estimate || step.protocol_text
+    );
+
+    return (
+        <div className="rounded-lg border border-gray-700 bg-gray-900/40 overflow-hidden">
+
+            {/* ── Step header ─────────────────────────────── */}
+            <div
+                className={`flex items-center justify-between gap-3 px-3 py-2.5 ${hasDetails ? "cursor-pointer hover:bg-gray-800/40" : ""} transition-colors`}
+                onClick={() => hasDetails && setOpen(!open)}
+            >
+                <div className="flex items-center gap-2 min-w-0">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-gray-700 text-gray-300 text-[10px] font-bold flex items-center justify-center">
+                        {step.step_number}
+                    </span>
+                    <div className="min-w-0">
+                        {step.reaction_name
+                            ? <p className="text-xs font-medium text-gray-200 truncate">{step.reaction_name}</p>
+                            : <p className="text-xs text-gray-500 italic">Unnamed transformation</p>
+                        }
+                        {step.reaction_type && (
+                            <p className="text-[10px] text-gray-600 mt-0.5">
+                                {REACTION_TYPE_LABELS[step.reaction_type] ?? step.reaction_type}
+                            </p>
+                        )}
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-shrink-0">
+                    {step.yield_estimate && (
+                        <span className="flex items-center gap-0.5 text-[10px] text-emerald-500 bg-emerald-950/40 border border-emerald-900/60 rounded px-1.5 py-0.5">
+                            <Percent className="w-2.5 h-2.5" />
+                            {step.yield_estimate}
+                        </span>
+                    )}
+                    <span className="text-[10px] text-gray-600">
+                        {(step.confidence * 100).toFixed(0)}% conf.
+                    </span>
+                    {hasDetails && (
+                        open
+                            ? <ChevronUp className="w-3.5 h-3.5 text-gray-600" />
+                            : <ChevronDown className="w-3.5 h-3.5 text-gray-600" />
+                    )}
+                </div>
+            </div>
+
+            {/* ── Schematic ───────────────────────────────── */}
+            {step.schematic && (
+                <div className="px-3 pb-2.5 border-t border-gray-800/60">
+                    <div className="flex items-center gap-1.5 mt-2 overflow-x-auto">
+                        {step.schematic.split("→").map((part, i, arr) => (
+                            <div key={i} className="flex items-center gap-1.5 flex-shrink-0">
+                                <code className="font-mono text-[10px] text-teal-400 bg-gray-800 px-2 py-1 rounded border border-gray-700 max-w-[180px] truncate block" title={part.trim()}>
+                                    {part.trim()}
+                                </code>
+                                {i < arr.length - 1 && (
+                                    <ArrowRight className="w-3 h-3 text-gray-600 flex-shrink-0" />
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* ── Expanded detail ──────────────────────────── */}
+            {open && hasDetails && (
+                <div className="px-3 pb-3 border-t border-gray-800 space-y-3 pt-3 animate-slide-up">
+
+                    {/* Conditions row */}
+                    {(step.temperature || step.duration || step.conditions) && (
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                            {step.temperature && (
+                                <div className="flex items-center gap-1.5 text-xs">
+                                    <Thermometer className="w-3 h-3 text-gray-600 flex-shrink-0" />
+                                    <div>
+                                        <p className="text-[10px] text-gray-600 uppercase tracking-wider">Temp</p>
+                                        <p className="text-gray-300">{step.temperature}</p>
+                                    </div>
+                                </div>
+                            )}
+                            {step.duration && (
+                                <div className="flex items-center gap-1.5 text-xs">
+                                    <Clock className="w-3 h-3 text-gray-600 flex-shrink-0" />
+                                    <div>
+                                        <p className="text-[10px] text-gray-600 uppercase tracking-wider">Duration</p>
+                                        <p className="text-gray-300">{step.duration}</p>
+                                    </div>
+                                </div>
+                            )}
+                            {step.yield_estimate && (
+                                <div className="flex items-center gap-1.5 text-xs">
+                                    <Percent className="w-3 h-3 text-gray-600 flex-shrink-0" />
+                                    <div>
+                                        <p className="text-[10px] text-gray-600 uppercase tracking-wider">Est. Yield</p>
+                                        <p className="text-emerald-400">{step.yield_estimate}</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {step.conditions && (
+                        <div>
+                            <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Conditions</p>
+                            <p className="text-xs text-gray-400 leading-relaxed">{step.conditions}</p>
+                        </div>
+                    )}
+
+                    {/* Reagents */}
+                    {(step.reagents?.length ?? 0) > 0 && (
+                        <div>
+                            <div className="flex items-center gap-1.5 mb-1.5">
+                                <FlaskConical className="w-3 h-3 text-gray-600" />
+                                <p className="text-[10px] text-gray-600 uppercase tracking-wider">Reagents</p>
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                                {step.reagents!.map((r, i) => (
+                                    <span key={i} className="text-[10px] text-gray-400 bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 font-mono">
+                                        {r}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Solvents */}
+                    {(step.solvents?.length ?? 0) > 0 && (
+                        <div>
+                            <div className="flex items-center gap-1.5 mb-1.5">
+                                <TestTube className="w-3 h-3 text-gray-600" />
+                                <p className="text-[10px] text-gray-600 uppercase tracking-wider">Solvents</p>
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                                {step.solvents!.map((s, i) => (
+                                    <span key={i} className="text-[10px] text-blue-400/80 bg-blue-950/30 border border-blue-900/50 rounded px-1.5 py-0.5 font-mono">
+                                        {s}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Starting materials */}
+                    {step.starting_materials.length > 0 && (
+                        <div>
+                            <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-1.5">Starting Materials</p>
+                            <div className="space-y-1">
+                                {step.starting_materials.map((smi, i) => (
+                                    <code key={i} className="block font-mono text-[10px] text-teal-400 bg-gray-800 px-2 py-1 rounded border border-gray-700 truncate" title={smi}>
+                                        {smi}
+                                    </code>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Protocol (collapsible) */}
+                    {step.protocol_text && (
+                        <div className="border border-gray-700 rounded-lg overflow-hidden">
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setProtocolOpen(!protocolOpen); }}
+                                className="w-full flex items-center justify-between gap-2 px-3 py-2 text-xs text-gray-400 hover:text-gray-300 hover:bg-gray-800/40 transition-colors"
+                            >
+                                <div className="flex items-center gap-1.5">
+                                    <FileText className="w-3.5 h-3.5 text-gray-600" />
+                                    <span className="font-medium uppercase tracking-wider text-[10px]">Lab Protocol</span>
+                                </div>
+                                {protocolOpen
+                                    ? <ChevronUp className="w-3.5 h-3.5 text-gray-600" />
+                                    : <ChevronDown className="w-3.5 h-3.5 text-gray-600" />
+                                }
+                            </button>
+                            {protocolOpen && (
+                                <div className="px-3 pb-3 pt-1 border-t border-gray-700 animate-slide-up">
+                                    <p className="text-xs text-gray-400 leading-relaxed whitespace-pre-line">
+                                        {step.protocol_text}
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
+
+
+// ── Retrosynthesis Panel ──────────────────────────────────────────────────────
+
+const RetrosynthesisPanel = ({ retro }: { retro: ExtendedRetrosynthesisResult }) => {
+    const difficultyColor = DIFFICULTY_STYLES[retro.difficulty_label ?? "unknown"] ?? "text-gray-500";
+    const complexityInfo = getComplexityLabel(retro.complexity_score);
+
+    return (
+        <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
+
+            {/* Header */}
+            <div className="flex items-center gap-1.5 mb-3">
+                <GitBranch className="w-3.5 h-3.5 text-gray-500" />
+                <p className="text-xs font-medium text-gray-300 uppercase tracking-wider">Retrosynthesis</p>
+                <Tip text="Analyses whether this molecule can be synthesized in a chemistry lab using BRICS retrosynthetic fragmentation. SA Score rates synthetic accessibility from 1 (trivial) to 10 (infeasible)." />
+            </div>
+
+            {retro.feasible ? (
+                <div className="space-y-3">
+
+                    {/* Key metrics row */}
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                        <div className="flex justify-between text-xs">
+                            <span className="text-gray-500">Synthesis steps</span>
+                            <span className="text-gray-200 font-medium">{retro.num_steps}</span>
+                        </div>
+
+                        {retro.sa_score !== undefined && retro.sa_score > 0 && (
+                            <div className="flex justify-between text-xs">
+                                <span className="text-gray-500 flex items-center">
+                                    SA Score
+                                    <Tip text="Synthetic Accessibility Score: 1.0 = trivially easy, 10.0 = practically impossible. Below 3.5 = easy, 3.5–6.0 = feasible, above 6.0 = hard/infeasible." />
+                                </span>
+                                <span className={difficultyColor}>{retro.sa_score.toFixed(2)}</span>
+                            </div>
+                        )}
+
+                        <div className="flex justify-between text-xs items-center">
+                            <span className="text-gray-500 flex items-center">
+                                Difficulty
+                                <Tip text="Derived from SA Score. Easy ≤ 3.5, Moderate ≤ 5.0, Hard ≤ 6.0, Infeasible > 6.0." />
+                            </span>
+                            <span className={`font-medium capitalize ${difficultyColor}`}>
+                                {retro.difficulty_label ?? getComplexityLabel(retro.complexity_score).label}
+                            </span>
+                        </div>
+
+                        <div className="flex justify-between text-xs">
+                            <span className="text-gray-500 flex items-center">
+                                Complexity
+                                <Tip text="SA Score × 10. < 15 = Very Easy, 15–25 = Moderate, 25–40 = Difficult, > 40 = Infeasible." />
+                            </span>
+                            <span className={complexityInfo.color}>
+                                {retro.complexity_score.toFixed(1)}
+                            </span>
+                        </div>
+
+                        {retro.estimated_total_yield && (
+                            <div className="flex justify-between text-xs col-span-2">
+                                <span className="text-gray-500 flex items-center">
+                                    Estimated total yield
+                                    <Tip text="Multiplicative estimate across all steps based on midpoint of per-step yield ranges. Rough approximation only." />
+                                </span>
+                                <span className="text-emerald-400 font-medium">{retro.estimated_total_yield}</span>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Synthesis summary */}
+                    {retro.synthesis_summary && (
+                        <div className="rounded-lg bg-gray-800/60 border border-gray-700 px-3 py-2.5">
+                            <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Summary</p>
+                            <p className="text-xs text-gray-400 leading-relaxed">{retro.synthesis_summary}</p>
+                        </div>
+                    )}
+
+                    {/* Step cards */}
+                    {retro.route.length > 0 && (
+                        <div className="space-y-2">
+                            <p className="text-[10px] text-gray-600 uppercase tracking-wider">
+                                Synthesis Route — {retro.route.length} step{retro.route.length > 1 ? "s" : ""}
+                            </p>
+                            {retro.route.map((step) => (
+                                <RetroStepCard key={step.step_number} step={step} />
+                            ))}
+                        </div>
+                    )}
+                </div>
+            ) : (
+                <div className="rounded-lg bg-red-950/20 border border-red-900/50 px-3 py-2.5">
+                    <div className="flex items-start gap-2">
+                        <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
+                        <div>
+                            <p className="text-xs font-medium text-red-400 mb-0.5">No feasible synthesis route</p>
+                            {retro.synthesis_summary
+                                ? <p className="text-xs text-red-300/60 leading-relaxed">{retro.synthesis_summary}</p>
+                                : <p className="text-xs text-red-300/60">SA Score too high — molecular complexity exceeds practical synthesis limits.</p>
+                            }
+                            {retro.sa_score !== undefined && retro.sa_score > 0 && (
+                                <p className="text-[10px] text-red-500/70 mt-1 font-mono">SA Score: {retro.sa_score.toFixed(2)}</p>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
@@ -486,8 +828,8 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
     const score = compound.final_score ?? 0;
     const scoreColor = getScoreColor(score);
 
-    // Cast to extended type — new fields are optional so this is safe
     const admet = compound.admet as ExtendedADMET | null | undefined;
+    const retro = compound.retrosynthesis as ExtendedRetrosynthesisResult | null | undefined;
 
     const copySmiles = () => {
         navigator.clipboard.writeText(compound.canonical_smiles);
@@ -520,7 +862,6 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
             {/* ── Compact row ──────────────────────────────────────────── */}
             <div className="flex items-center gap-4">
 
-                {/* Rank + score ring */}
                 <div className="flex-shrink-0 text-center">
                     <div className={`score-ring ${ringStyle}`}>
                         {score.toFixed(0)}
@@ -528,7 +869,6 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                     <p className="text-xs text-gray-600 mt-1">#{compound.rank}</p>
                 </div>
 
-                {/* SMILES + badges */}
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                         <span className="smiles-display">{compound.canonical_smiles}</span>
@@ -558,7 +898,6 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                 }
                             </span>
                         )}
-                        {/* Overall risk inline badge */}
                         {admet?.overall_risk && admet.overall_risk !== "low" && (
                             <span className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border ${getRiskStyle(admet.overall_risk)}`}>
                                 <Shield className="w-2.5 h-2.5" />
@@ -570,10 +909,10 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                 {compound.docking.best_affinity_kcal.toFixed(2)} kcal/mol
                             </span>
                         )}
-                        {compound.retrosynthesis && (
-                            <span className="text-xs text-gray-500">
-                                {compound.retrosynthesis.feasible
-                                    ? `${compound.retrosynthesis.num_steps} synthesis steps`
+                        {retro && (
+                            <span className={`text-xs ${retro.feasible ? "text-gray-500" : "text-red-500/70"}`}>
+                                {retro.feasible
+                                    ? `${retro.num_steps} synthesis step${retro.num_steps !== 1 ? "s" : ""}${retro.difficulty_label ? ` · ${retro.difficulty_label}` : ""}`
                                     : "synthesis: infeasible"
                                 }
                             </span>
@@ -593,7 +932,6 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
             {expanded && (
                 <div className="mt-4 pt-4 border-t border-gray-800 space-y-5 animate-slide-up">
 
-                    {/* Full SMILES */}
                     <div>
                         <p className="text-xs text-gray-500 mb-1 uppercase tracking-wider">Canonical SMILES</p>
                         <p className="font-mono text-xs text-emerald-400 bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 break-all">
@@ -603,7 +941,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
-                        {/* ── Drug-likeness ──────────────────────────────── */}
+                        {/* Drug-likeness */}
                         {compound.lipinski && (
                             <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
                                 <div className="flex items-center gap-1.5 mb-2">
@@ -641,10 +979,9 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                             </div>
                         )}
 
-                        {/* ── ADMET compact panel ────────────────────────── */}
+                        {/* ADMET compact panel */}
                         {admet && (
                             <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
-                                {/* Header row */}
                                 <div className="flex items-center justify-between mb-2">
                                     <div className="flex items-center gap-1.5">
                                         <Activity className="w-3.5 h-3.5 text-gray-500" />
@@ -659,7 +996,6 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                     )}
                                 </div>
 
-                                {/* Core 5 metrics */}
                                 <div className="space-y-1.5">
                                     {[
                                         { label: "hERG inhibition", value: formatProbability(admet.herg_inhibition), risk: admet.herg_inhibition > 0.5, tip: "Ideal: <30%. Blocking the hERG channel causes fatal heart arrhythmia — the #1 reason drugs are withdrawn from markets." },
@@ -675,7 +1011,6 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                     ))}
                                 </div>
 
-                                {/* Flags */}
                                 {admet.flags.length > 0 && (
                                     <div className="mt-2 pt-2 border-t border-gray-700 space-y-1.5">
                                         <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-1">
@@ -689,7 +1024,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                             </div>
                         )}
 
-                        {/* ── Docking ────────────────────────────────────── */}
+                        {/* Docking */}
                         {compound.docking && (
                             <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
                                 <div className="flex items-center gap-1.5 mb-2">
@@ -765,62 +1100,14 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                             </div>
                         )}
 
-                        {/* ── Retrosynthesis ─────────────────────────────── */}
-                        {compound.retrosynthesis && (
-                            <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
-                                <div className="flex items-center gap-1.5 mb-2">
-                                    <GitBranch className="w-3.5 h-3.5 text-gray-500" />
-                                    <p className="text-xs font-medium text-gray-300 uppercase tracking-wider">Retrosynthesis</p>
-                                    <Tip text="Analyses whether this molecule can be synthesized in a chemistry lab, and how many steps it would take." />
-                                </div>
-                                {compound.retrosynthesis.feasible ? (
-                                    <div className="space-y-1.5">
-                                        <div className="flex justify-between text-xs">
-                                            <span className="text-gray-500">Total steps</span>
-                                            <span className="text-gray-300">{compound.retrosynthesis.num_steps}</span>
-                                        </div>
-                                        <div className="flex justify-between text-xs items-center">
-                                            <span className="text-gray-500 flex items-center">
-                                                Complexity score
-                                                <Tip text="SA Score: < 15 = Very Easy · 15–25 = Moderate · 25–40 = Difficult · > 40 = Practically infeasible." />
-                                            </span>
-                                            <div className="flex items-center gap-2">
-                                                <span className={getComplexityLabel(compound.retrosynthesis.complexity_score).color}>
-                                                    {compound.retrosynthesis.complexity_score.toFixed(1)}
-                                                </span>
-                                                <span className={`text-xs ${getComplexityLabel(compound.retrosynthesis.complexity_score).color}`}>
-                                                    ({getComplexityLabel(compound.retrosynthesis.complexity_score).label})
-                                                </span>
-                                            </div>
-                                        </div>
-                                        {compound.retrosynthesis.route.map((step) => (
-                                            <div key={step.step_number} className="mt-2 pt-2 border-t border-gray-700">
-                                                <p className="text-xs text-gray-500 mb-1">
-                                                    Step {step.step_number} — confidence {(step.confidence * 100).toFixed(0)}%
-                                                </p>
-                                                <div className="space-y-0.5">
-                                                    {step.starting_materials.map((smi, i) => (
-                                                        <p key={i} className="font-mono text-xs text-emerald-400 bg-gray-900 px-2 py-0.5 rounded truncate">
-                                                            {smi}
-                                                        </p>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <p className="text-xs text-red-400">No feasible synthesis route found.</p>
-                                )}
-                            </div>
-                        )}
+                        {/* Retrosynthesis — uses new RetrosynthesisPanel */}
+                        {retro && <RetrosynthesisPanel retro={retro} />}
                     </div>
 
-                    {/* ── Full ADMET report (narrative + endpoint table) ────── */}
-                    {admet && (
-                        <FullADMETReport admet={admet} />
-                    )}
+                    {/* Full ADMET report */}
+                    {admet && <FullADMETReport admet={admet} />}
 
-                    {/* ── Score breakdown ────────────────────────────────────── */}
+                    {/* Score breakdown */}
                     {breakdownLoading && (
                         <div className="flex items-center gap-2 text-xs text-gray-600">
                             <div className="w-3 h-3 border border-gray-600 border-t-gray-400 rounded-full animate-spin" />
@@ -851,8 +1138,8 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                                 <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
                                                     <div
                                                         className={`h-full rounded-full transition-all ${pct >= 70 ? "bg-emerald-600" :
-                                                                pct >= 40 ? "bg-yellow-600" :
-                                                                    "bg-red-700"
+                                                            pct >= 40 ? "bg-yellow-600" :
+                                                                "bg-red-700"
                                                             }`}
                                                         style={{ width: `${pct}%` }}
                                                     />
