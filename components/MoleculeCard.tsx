@@ -7,7 +7,7 @@ import {
     AlertTriangle, AlertCircle, Lightbulb,
     Download, Loader2, BookOpen, Layers, Shield,
     CheckCircle2, Clock, Thermometer, ArrowRight,
-    FileText, Percent, Beaker, TestTube,
+    FileText, Percent, Beaker, TestTube, SlidersHorizontal,
 } from "lucide-react";
 import type { CompoundResult, ScoreBreakdown, ADMETFlagDetail, DockingFileType } from "@/lib/api";
 import {
@@ -39,6 +39,17 @@ interface ADMETEndpointValue {
     triggered: boolean;
 }
 
+interface ADMETThresholdConfig {
+    enabled: boolean;
+    cutoff: number;
+    direction: "above" | "below";
+    severity_high?: number | null;
+    hard_fail: boolean;
+    threshold_str?: string | null;
+    implication?: string | null;
+    recommendation?: string | null;
+}
+
 type OverallRisk = "low" | "moderate" | "high";
 
 interface ExtendedADMET {
@@ -55,6 +66,7 @@ interface ExtendedADMET {
     narrative?: ADMETNarrativeBlock[];
     endpoint_table?: ADMETEndpointValue[];
     extra_properties?: Record<string, number>;
+    thresholds_used?: Record<string, ADMETThresholdConfig>;
 }
 
 
@@ -105,6 +117,14 @@ const CATEGORY_LABELS: Record<string, string> = {
     toxicity: "Toxicity",
     physchem: "Phys. Chem.",
     other: "Other",
+};
+
+const THRESHOLD_KEY_LABELS: Record<string, string> = {
+    herg_inhibition: "hERG Inhibition",
+    hepatotoxicity: "Hepatotoxicity",
+    caco2_permeability: "Caco-2 Permeability",
+    oral_bioavailability: "Oral Bioavailability",
+    bbb_penetration: "BBB Penetration",
 };
 
 const BREAKDOWN_TIPS: Record<string, string> = {
@@ -326,9 +346,16 @@ const NarrativeCard = ({ block }: { block: ADMETNarrativeBlock }) => {
 const EndpointTable = ({ endpoints }: { endpoints: ADMETEndpointValue[] }) => {
     const [activeCategory, setActiveCategory] = useState<string>("all");
 
-    const presentCategories = useMemo(() => {
+    const { presentCategories, categoryCounts } = useMemo(() => {
+        const counts: Record<string, number> = { all: endpoints.length };
+        endpoints.forEach(e => {
+            counts[e.category] = (counts[e.category] ?? 0) + 1;
+        });
         const cats = new Set(endpoints.map(e => e.category));
-        return ["all", ...CATEGORY_ORDER.filter(c => cats.has(c))];
+        return {
+            presentCategories: ["all", ...CATEGORY_ORDER.filter(c => cats.has(c))],
+            categoryCounts: counts,
+        };
     }, [endpoints]);
 
     const filtered = useMemo(
@@ -345,12 +372,15 @@ const EndpointTable = ({ endpoints }: { endpoints: ADMETEndpointValue[] }) => {
                     <button
                         key={cat}
                         onClick={() => setActiveCategory(cat)}
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider border transition-colors ${activeCategory === cat
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider border transition-colors flex items-center gap-1 ${activeCategory === cat
                             ? "bg-gray-700 border-gray-500 text-gray-200"
                             : "border-gray-700 text-gray-500 hover:border-gray-600 hover:text-gray-400"
                             }`}
                     >
                         {cat === "all" ? "All" : CATEGORY_LABELS[cat]}
+                        <span className={`text-[9px] ${activeCategory === cat ? "text-gray-400" : "text-gray-700"}`}>
+                            {categoryCounts[cat] ?? 0}
+                        </span>
                     </button>
                 ))}
             </div>
@@ -434,16 +464,65 @@ const EndpointTable = ({ endpoints }: { endpoints: ADMETEndpointValue[] }) => {
 };
 
 
+// ── Active Thresholds Panel ───────────────────────────────────────────────────
+
+const ActiveThresholdsPanel = ({ thresholds }: { thresholds: Record<string, ADMETThresholdConfig> }) => {
+    const entries = Object.entries(thresholds);
+    if (entries.length === 0) return null;
+
+    return (
+        <div className="overflow-x-auto rounded-lg border border-gray-700/60">
+            <table className="w-full text-xs">
+                <thead>
+                    <tr className="border-b border-gray-700/60 bg-gray-800/40">
+                        <th className="text-left px-3 py-1.5 text-gray-600 font-medium uppercase tracking-wider">Endpoint</th>
+                        <th className="text-left px-3 py-1.5 text-gray-600 font-medium uppercase tracking-wider">Cutoff</th>
+                        <th className="text-center px-3 py-1.5 text-gray-600 font-medium uppercase tracking-wider">Hard Fail</th>
+                        <th className="text-center px-3 py-1.5 text-gray-600 font-medium uppercase tracking-wider">Active</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {entries.map(([key, cfg]) => (
+                        <tr key={key} className="border-b border-gray-800/60 last:border-0 hover:bg-gray-800/30">
+                            <td className="px-3 py-1.5 text-gray-400">
+                                {THRESHOLD_KEY_LABELS[key] ?? key}
+                            </td>
+                            <td className="px-3 py-1.5 font-mono text-gray-400">
+                                {cfg.threshold_str ?? `${cfg.direction === "above" ? ">" : "<"}${cfg.cutoff}`}
+                            </td>
+                            <td className="px-3 py-1.5 text-center">
+                                {cfg.hard_fail
+                                    ? <span className="text-[10px] text-red-500 border border-red-900/60 rounded px-1.5 py-0.5 uppercase tracking-wider">yes</span>
+                                    : <span className="text-[10px] text-gray-700">—</span>
+                                }
+                            </td>
+                            <td className="px-3 py-1.5 text-center">
+                                {cfg.enabled
+                                    ? <CheckCircle2 className="w-3 h-3 text-emerald-600 inline" />
+                                    : <span className="text-gray-700 text-[10px]">off</span>
+                                }
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+};
+
+
 // ── Full ADMET Report ─────────────────────────────────────────────────────────
 
 const FullADMETReport = ({ admet }: { admet: ExtendedADMET }) => {
     const [endpointTableOpen, setEndpointTableOpen] = useState(false);
+    const [thresholdsOpen, setThresholdsOpen] = useState(false);
 
     const hasNarrative = (admet.narrative?.length ?? 0) > 0;
     const hasEndpointTable = (admet.endpoint_table?.length ?? 0) > 0;
     const hasDecisionBasis = (admet.decision_basis?.length ?? 0) > 0;
+    const hasThresholds = Object.keys(admet.thresholds_used ?? {}).length > 0;
 
-    if (!hasNarrative && !hasEndpointTable) return null;
+    if (!hasNarrative && !hasEndpointTable && !hasDecisionBasis) return null;
 
     return (
         <div className="rounded-lg bg-gray-800/30 border border-gray-700 overflow-hidden">
@@ -454,6 +533,8 @@ const FullADMETReport = ({ admet }: { admet: ExtendedADMET }) => {
             </div>
 
             <div className="p-3 space-y-4">
+
+                {/* Narrative blocks */}
                 {hasNarrative && (
                     <div className="space-y-2">
                         {admet.narrative!.map((block, i) => (
@@ -462,6 +543,7 @@ const FullADMETReport = ({ admet }: { admet: ExtendedADMET }) => {
                     </div>
                 )}
 
+                {/* Full endpoint table */}
                 {hasEndpointTable && (
                     <div>
                         <button
@@ -487,6 +569,33 @@ const FullADMETReport = ({ admet }: { admet: ExtendedADMET }) => {
                     </div>
                 )}
 
+                {/* Active thresholds */}
+                {hasThresholds && (
+                    <div>
+                        <button
+                            onClick={() => setThresholdsOpen(!thresholdsOpen)}
+                            className="w-full flex items-center justify-between gap-2 text-xs text-gray-400 hover:text-gray-300 transition-colors py-1"
+                        >
+                            <div className="flex items-center gap-1.5">
+                                <SlidersHorizontal className="w-3.5 h-3.5 text-gray-500" />
+                                <span className="font-medium uppercase tracking-wider">Active Thresholds</span>
+                                <span className="text-gray-600 text-[10px]">applied to this result</span>
+                            </div>
+                            {thresholdsOpen
+                                ? <ChevronUp className="w-3.5 h-3.5 text-gray-600" />
+                                : <ChevronDown className="w-3.5 h-3.5 text-gray-600" />
+                            }
+                        </button>
+
+                        {thresholdsOpen && (
+                            <div className="mt-2 animate-slide-up">
+                                <ActiveThresholdsPanel thresholds={admet.thresholds_used!} />
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Decision basis */}
                 {hasDecisionBasis && (
                     <div>
                         <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-1.5">Decision Basis</p>
@@ -520,7 +629,7 @@ const RetroStepCard = ({ step }: { step: ExtendedRetrosynthesisStep }) => {
     return (
         <div className="rounded-lg border border-gray-700 bg-gray-900/40 overflow-hidden">
 
-            {/* ── Step header ─────────────────────────────── */}
+            {/* Step header */}
             <div
                 className={`flex items-center justify-between gap-3 px-3 py-2.5 ${hasDetails ? "cursor-pointer hover:bg-gray-800/40" : ""} transition-colors`}
                 onClick={() => hasDetails && setOpen(!open)}
@@ -560,7 +669,7 @@ const RetroStepCard = ({ step }: { step: ExtendedRetrosynthesisStep }) => {
                 </div>
             </div>
 
-            {/* ── Schematic ───────────────────────────────── */}
+            {/* Schematic */}
             {step.schematic && (
                 <div className="px-3 pb-2.5 border-t border-gray-800/60">
                     <div className="flex items-center gap-1.5 mt-2 overflow-x-auto">
@@ -578,11 +687,10 @@ const RetroStepCard = ({ step }: { step: ExtendedRetrosynthesisStep }) => {
                 </div>
             )}
 
-            {/* ── Expanded detail ──────────────────────────── */}
+            {/* Expanded detail */}
             {open && hasDetails && (
                 <div className="px-3 pb-3 border-t border-gray-800 space-y-3 pt-3 animate-slide-up">
 
-                    {/* Conditions row */}
                     {(step.temperature || step.duration || step.conditions) && (
                         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                             {step.temperature && (
@@ -622,7 +730,6 @@ const RetroStepCard = ({ step }: { step: ExtendedRetrosynthesisStep }) => {
                         </div>
                     )}
 
-                    {/* Reagents */}
                     {(step.reagents?.length ?? 0) > 0 && (
                         <div>
                             <div className="flex items-center gap-1.5 mb-1.5">
@@ -639,7 +746,6 @@ const RetroStepCard = ({ step }: { step: ExtendedRetrosynthesisStep }) => {
                         </div>
                     )}
 
-                    {/* Solvents */}
                     {(step.solvents?.length ?? 0) > 0 && (
                         <div>
                             <div className="flex items-center gap-1.5 mb-1.5">
@@ -656,7 +762,6 @@ const RetroStepCard = ({ step }: { step: ExtendedRetrosynthesisStep }) => {
                         </div>
                     )}
 
-                    {/* Starting materials */}
                     {step.starting_materials.length > 0 && (
                         <div>
                             <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-1.5">Starting Materials</p>
@@ -670,7 +775,6 @@ const RetroStepCard = ({ step }: { step: ExtendedRetrosynthesisStep }) => {
                         </div>
                     )}
 
-                    {/* Protocol (collapsible) */}
                     {step.protocol_text && (
                         <div className="border border-gray-700 rounded-lg overflow-hidden">
                             <button
@@ -711,7 +815,6 @@ const RetrosynthesisPanel = ({ retro }: { retro: ExtendedRetrosynthesisResult })
     return (
         <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
 
-            {/* Header */}
             <div className="flex items-center gap-1.5 mb-3">
                 <GitBranch className="w-3.5 h-3.5 text-gray-500" />
                 <p className="text-xs font-medium text-gray-300 uppercase tracking-wider">Retrosynthesis</p>
@@ -720,8 +823,6 @@ const RetrosynthesisPanel = ({ retro }: { retro: ExtendedRetrosynthesisResult })
 
             {retro.feasible ? (
                 <div className="space-y-3">
-
-                    {/* Key metrics row */}
                     <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                         <div className="flex justify-between text-xs">
                             <span className="text-gray-500">Synthesis steps</span>
@@ -769,7 +870,6 @@ const RetrosynthesisPanel = ({ retro }: { retro: ExtendedRetrosynthesisResult })
                         )}
                     </div>
 
-                    {/* Synthesis summary */}
                     {retro.synthesis_summary && (
                         <div className="rounded-lg bg-gray-800/60 border border-gray-700 px-3 py-2.5">
                             <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Summary</p>
@@ -777,7 +877,6 @@ const RetrosynthesisPanel = ({ retro }: { retro: ExtendedRetrosynthesisResult })
                         </div>
                     )}
 
-                    {/* Step cards */}
                     {retro.route.length > 0 && (
                         <div className="space-y-2">
                             <p className="text-[10px] text-gray-600 uppercase tracking-wider">
@@ -856,10 +955,14 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
 
     const flagCount = admet?.flags?.length ?? admet?.flag_summary?.length ?? 0;
 
+    // suppress unused import warning
+    void scoreColor;
+    void Beaker;
+
     return (
         <div className="card-hover animate-fade-in">
 
-            {/* ── Compact row ──────────────────────────────────────────── */}
+            {/* Compact row */}
             <div className="flex items-center gap-4">
 
                 <div className="flex-shrink-0 text-center">
@@ -928,7 +1031,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                 </button>
             </div>
 
-            {/* ── Expanded detail ───────────────────────────────────────── */}
+            {/* Expanded detail */}
             {expanded && (
                 <div className="mt-4 pt-4 border-t border-gray-800 space-y-5 animate-slide-up">
 
@@ -1100,7 +1203,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                             </div>
                         )}
 
-                        {/* Retrosynthesis — uses new RetrosynthesisPanel */}
+                        {/* Retrosynthesis */}
                         {retro && <RetrosynthesisPanel retro={retro} />}
                     </div>
 
