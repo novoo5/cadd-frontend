@@ -4,7 +4,7 @@ import { useState } from "react";
 import {
     ChevronDown, ChevronUp, Info, Zap, FlaskConical,
     Lock, X, Clock, ShieldAlert, Settings2, Dna, Pill, Brain,
-    Activity, Layers, Target, AlertTriangle,
+    Activity, Layers, Target, AlertTriangle, MapPin,
 } from "lucide-react";
 import type {
     PipelineSteps,
@@ -108,6 +108,12 @@ const PRESET_ACCENT: Record<string, string> = {
     amber: "border-amber-600/70  bg-amber-950/40  text-amber-300  [&_svg]:text-amber-400",
 };
 
+const BINDING_MODES: { value: BindingSiteMode; label: string; hint: string }[] = [
+    { value: "auto", label: "Auto-detect", hint: "Detects site from co-crystallised ligand in the PDB file" },
+    { value: "coordinates", label: "Manual Coords", hint: "Provide Cartesian centre + box size directly" },
+    { value: "residues", label: "Residue Range", hint: "Define pocket by chain ID and residue number range" },
+];
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatDockingTime(compounds: number, minPerCompound: number): string {
@@ -195,8 +201,8 @@ function SegmentedPill<T extends string | number>({
                     type="button"
                     onClick={() => onChange(opt)}
                     className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${value === opt
-                            ? "bg-teal-600 text-white shadow-sm shadow-teal-900/50"
-                            : "text-gray-400 hover:text-gray-200 hover:bg-gray-700/50"
+                        ? "bg-teal-600 text-white shadow-sm shadow-teal-900/50"
+                        : "text-gray-400 hover:text-gray-200 hover:bg-gray-700/50"
                         }`}
                 >
                     {renderLabel ? renderLabel(opt) : String(opt)}
@@ -231,9 +237,7 @@ function RunModeCard({
                 className="sr-only"
             />
             <div className={`mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all ${checked ? "bg-current border-current" : "border-gray-600 bg-gray-800"
-                }`}
-                style={{ color: checked ? undefined : undefined }}
-            >
+                }`}>
                 {checked && (
                     <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
                         <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -275,6 +279,7 @@ export default function AdvancedSettings({
     const toxOnly = toxicityReportOnly && !directScoreOnly;
     const bothModes = toxicityReportOnly && directScoreOnly;
     const analoguesOff = directScoreOnly;
+    const dockingDisabled = toxOnly || !pipelineSteps.docking;
 
     const toggleStep = (key: keyof PipelineSteps) => {
         if (key === "drug_likeness") return;
@@ -316,6 +321,7 @@ export default function AdvancedSettings({
         toxicityReportOnly && { label: bothModes ? "Tox + Direct" : "Tox Only", color: "bg-red-900/50 border-red-700/50 text-red-300" },
         lockedScaffoldSmarts.trim() && { label: "Scaffold Lock", color: "bg-amber-900/50 border-amber-700/50 text-amber-300" },
         admetConfig.preset !== "balanced" && { label: `${admetConfig.preset} ADMET`, color: "bg-teal-900/50 border-teal-700/50 text-teal-300" },
+        bindingSiteMode !== "auto" && { label: bindingSiteMode === "coordinates" ? "Manual Coords" : "Residue Range", color: "bg-sky-900/50 border-sky-700/50 text-sky-300" },
     ].filter(Boolean) as { label: string; color: string }[];
 
     return (
@@ -407,8 +413,8 @@ export default function AdvancedSettings({
                                             type="button"
                                             onClick={() => onNumAnaloguesChange(val)}
                                             className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${numAnalogues === val
-                                                    ? "bg-teal-600 text-white shadow-sm shadow-teal-900/50"
-                                                    : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+                                                ? "bg-teal-600 text-white shadow-sm shadow-teal-900/50"
+                                                : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
                                                 }`}
                                         >
                                             {val}
@@ -532,13 +538,13 @@ export default function AdvancedSettings({
                                         <label
                                             key={opt.value}
                                             className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl border cursor-pointer transition-all ${violationVal === opt.value
-                                                    ? "border-teal-600/60 bg-teal-950/25"
-                                                    : "border-gray-800 hover:border-gray-700 hover:bg-gray-800/30"
+                                                ? "border-teal-600/60 bg-teal-950/25"
+                                                : "border-gray-800 hover:border-gray-700 hover:bg-gray-800/30"
                                                 }`}
                                         >
                                             <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${violationVal === opt.value
-                                                    ? "border-teal-500 bg-teal-500"
-                                                    : "border-gray-600"
+                                                ? "border-teal-500 bg-teal-500"
+                                                : "border-gray-600"
                                                 }`}>
                                                 {violationVal === opt.value && (
                                                     <span className="w-1.5 h-1.5 rounded-full bg-white" />
@@ -573,13 +579,13 @@ export default function AdvancedSettings({
                                         <label
                                             key={opt.value}
                                             className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl border cursor-pointer transition-all ${solubilityFilter === opt.value
-                                                    ? "border-teal-600/60 bg-teal-950/25"
-                                                    : "border-gray-800 hover:border-gray-700 hover:bg-gray-800/30"
+                                                ? "border-teal-600/60 bg-teal-950/25"
+                                                : "border-gray-800 hover:border-gray-700 hover:bg-gray-800/30"
                                                 }`}
                                         >
                                             <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${solubilityFilter === opt.value
-                                                    ? "border-teal-500 bg-teal-500"
-                                                    : "border-gray-600"
+                                                ? "border-teal-500 bg-teal-500"
+                                                : "border-gray-600"
                                                 }`}>
                                                 {solubilityFilter === opt.value && (
                                                     <span className="w-1.5 h-1.5 rounded-full bg-white" />
@@ -632,8 +638,8 @@ export default function AdvancedSettings({
                                             type="button"
                                             onClick={() => handleAdmetPreset(preset.value)}
                                             className={`w-full text-left flex items-center gap-3 px-3.5 py-3 rounded-2xl border transition-all ${isActive
-                                                    ? PRESET_ACCENT[preset.accent]
-                                                    : "bg-gray-900/20 border-gray-800 text-gray-400 hover:border-gray-600 hover:bg-gray-800/30 hover:text-gray-300"
+                                                ? PRESET_ACCENT[preset.accent]
+                                                : "bg-gray-900/20 border-gray-800 text-gray-400 hover:border-gray-600 hover:bg-gray-800/30 hover:text-gray-300"
                                                 }`}
                                         >
                                             <span className={isActive ? "" : "text-gray-600 [&_svg]:text-gray-600"}>
@@ -715,7 +721,6 @@ export default function AdvancedSettings({
                                     </div>
                                 </div>
 
-                                {/* Divider between sliders */}
                                 <div className="h-px bg-gray-800" />
 
                                 {/* Hepatotoxicity slider */}
@@ -782,14 +787,14 @@ export default function AdvancedSettings({
                                     <label
                                         key={step.key}
                                         className={`flex items-start gap-3.5 p-4 rounded-2xl border transition-all ${isChecked
-                                                ? "bg-gray-800/50 border-gray-700"
-                                                : "bg-transparent border-gray-800/50 hover:border-gray-700 hover:bg-gray-800/20"
+                                            ? "bg-gray-800/50 border-gray-700"
+                                            : "bg-transparent border-gray-800/50 hover:border-gray-700 hover:bg-gray-800/20"
                                             } ${step.locked ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
                                     >
                                         <div className="pt-0.5">
                                             <span className={`flex w-4 h-4 rounded-md border-2 items-center justify-center transition-all ${isChecked
-                                                    ? "bg-teal-600 border-teal-600"
-                                                    : "bg-gray-800 border-gray-600"
+                                                ? "bg-teal-600 border-teal-600"
+                                                : "bg-gray-800 border-gray-600"
                                                 }`}>
                                                 {isChecked && (
                                                     <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 10 10" fill="none">
@@ -830,10 +835,15 @@ export default function AdvancedSettings({
                     {/* ════════════════════════════════
                         SECTION 6 · Docking Settings
                     ════════════════════════════════ */}
-                    <section className={toxOnly || !pipelineSteps.docking ? "opacity-40 pointer-events-none select-none" : ""}>
+                    <section className={dockingDisabled ? "opacity-40 pointer-events-none select-none" : ""}>
                         <SectionHeader
                             icon={<Target className="w-4 h-4" />}
                             label="Docking Settings"
+                            aside={dockingDisabled && (
+                                <span className="text-[11px] text-gray-500 font-medium">
+                                    {toxOnly ? "Disabled — Tox-only mode" : "Disabled — Docking step off"}
+                                </span>
+                            )}
                         />
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -849,8 +859,8 @@ export default function AdvancedSettings({
                                             type="button"
                                             onClick={() => { setDockingCountCustom(false); onMaxDockingCompoundsChange(val); }}
                                             className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${!dockingCountCustom && maxDockingCompounds === val
-                                                    ? "bg-teal-600 text-white shadow-sm shadow-teal-900/50"
-                                                    : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+                                                ? "bg-teal-600 text-white shadow-sm shadow-teal-900/50"
+                                                : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
                                                 }`}
                                         >
                                             Top {val}
@@ -860,8 +870,8 @@ export default function AdvancedSettings({
                                         type="button"
                                         onClick={() => setDockingCountCustom(true)}
                                         className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${dockingCountCustom || isCustomCount
-                                                ? "bg-teal-600 text-white shadow-sm shadow-teal-900/50"
-                                                : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
+                                            ? "bg-teal-600 text-white shadow-sm shadow-teal-900/50"
+                                            : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200"
                                             }`}
                                     >
                                         Custom
@@ -887,10 +897,10 @@ export default function AdvancedSettings({
 
                                 {/* Compute estimate */}
                                 <div className={`flex items-start gap-3 px-4 py-3 rounded-xl border text-xs ${dockTimeSev === "heavy"
-                                        ? "border-red-900/50 bg-red-950/20 text-red-400"
-                                        : dockTimeSev === "warn"
-                                            ? "border-yellow-900/50 bg-yellow-950/20 text-yellow-400"
-                                            : "border-gray-700/60 bg-gray-900/30 text-gray-400"
+                                    ? "border-red-900/50 bg-red-950/20 text-red-400"
+                                    : dockTimeSev === "warn"
+                                        ? "border-yellow-900/50 bg-yellow-950/20 text-yellow-400"
+                                        : "border-gray-700/60 bg-gray-900/30 text-gray-400"
                                     }`}>
                                     <Clock className="w-4 h-4 shrink-0 mt-0.5" />
                                     <div>
@@ -912,8 +922,8 @@ export default function AdvancedSettings({
                                         <label
                                             key={speed.value}
                                             className={`flex items-center justify-between px-4 py-3.5 rounded-2xl border cursor-pointer transition-all ${dockingSpeed === speed.value
-                                                    ? "bg-teal-950/30 border-teal-600/60 text-white"
-                                                    : "bg-gray-800/20 border-gray-700/50 text-gray-400 hover:bg-gray-800/40 hover:border-gray-600"
+                                                ? "bg-teal-950/30 border-teal-600/60 text-white"
+                                                : "bg-gray-800/20 border-gray-700/50 text-gray-400 hover:bg-gray-800/40 hover:border-gray-600"
                                                 }`}
                                         >
                                             <div className="flex items-center gap-3">
@@ -946,6 +956,182 @@ export default function AdvancedSettings({
                                 </div>
                             </div>
                         </div>
+                    </section>
+
+                    <SectionDivider />
+
+                    {/* ════════════════════════════════
+                        SECTION 7 · Binding Site
+                    ════════════════════════════════ */}
+                    <section className={dockingDisabled ? "opacity-40 pointer-events-none select-none" : ""}>
+                        <SectionHeader
+                            icon={<MapPin className="w-4 h-4" />}
+                            label="Binding Site Detection"
+                            aside={
+                                bindingSiteMode !== "auto" && !dockingDisabled ? (
+                                    <span className="text-[11px] text-sky-400 font-medium">
+                                        {bindingSiteMode === "coordinates" ? "Manual Coords active" : "Residue Range active"}
+                                    </span>
+                                ) : undefined
+                            }
+                        />
+
+                        {/* Mode selector */}
+                        <div className="flex flex-wrap gap-2 mb-6">
+                            {BINDING_MODES.map((mode) => (
+                                <button
+                                    key={mode.value}
+                                    type="button"
+                                    onClick={() => onBindingSiteModeChange(mode.value)}
+                                    title={mode.hint}
+                                    className={`px-4 py-2 rounded-xl text-xs font-semibold border transition-all ${bindingSiteMode === mode.value
+                                        ? "bg-sky-600 text-white border-sky-600 shadow-sm shadow-sky-900/50"
+                                        : "bg-gray-800/40 text-gray-400 border-gray-700/50 hover:bg-gray-800 hover:text-gray-200 hover:border-gray-600"
+                                        }`}
+                                >
+                                    {mode.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Auto mode info */}
+                        {bindingSiteMode === "auto" && (
+                            <div className="flex items-start gap-3 px-4 py-3.5 rounded-xl border border-sky-700/30 bg-sky-950/20">
+                                <Info className="w-4 h-4 shrink-0 mt-0.5 text-sky-500" />
+                                <p className="text-xs text-sky-300 leading-relaxed">
+                                    The backend will detect the binding site automatically from the co-crystallised ligand in the PDB file.
+                                    Use <strong className="text-sky-200">Manual Coords</strong> or <strong className="text-sky-200">Residue Range</strong> for apo structures or if auto-detection fails.
+                                </p>
+                            </div>
+                        )}
+
+                        {/* Coordinates mode */}
+                        {bindingSiteMode === "coordinates" && (
+                            <div className="rounded-2xl border border-gray-700/60 bg-gray-900/30 p-5">
+                                <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-600 mb-4">
+                                    Pocket Centre (Å) + Search Box
+                                </p>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                    {(["x", "y", "z"] as const).map((axis) => (
+                                        <div key={axis}>
+                                            <FieldLabel>
+                                                Centre {axis.toUpperCase()} (Å)
+                                            </FieldLabel>
+                                            <input
+                                                type="number"
+                                                step="0.1"
+                                                value={bindingSiteCoords[axis]}
+                                                onChange={(e) =>
+                                                    onBindingSiteCoordsChange({
+                                                        ...bindingSiteCoords,
+                                                        [axis]: parseFloat(e.target.value) || 0,
+                                                    })
+                                                }
+                                                className="input w-full text-sm font-mono"
+                                                placeholder="0.0"
+                                            />
+                                        </div>
+                                    ))}
+                                    <div>
+                                        <FieldLabel hint="Search box side length in Angstroms. 20 Å covers most binding pockets; increase for large/allosteric sites.">
+                                            Box Size (Å)
+                                        </FieldLabel>
+                                        <input
+                                            type="number"
+                                            step="1"
+                                            min={10}
+                                            max={60}
+                                            value={bindingSiteCoords.box_size}
+                                            onChange={(e) =>
+                                                onBindingSiteCoordsChange({
+                                                    ...bindingSiteCoords,
+                                                    box_size: parseFloat(e.target.value) || 20,
+                                                })
+                                            }
+                                            className="input w-full text-sm font-mono"
+                                            placeholder="20"
+                                        />
+                                    </div>
+                                </div>
+                                <p className="text-[11px] text-gray-600 mt-4">
+                                    Tip: Open the PDB in PyMOL or RCSB viewer, select the ligand, and read off the XYZ coords from the centre of mass.
+                                </p>
+                            </div>
+                        )}
+
+                        {/* Residues mode */}
+                        {bindingSiteMode === "residues" && (
+                            <div className="rounded-2xl border border-gray-700/60 bg-gray-900/30 p-5">
+                                <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-600 mb-4">
+                                    Chain + Residue Range
+                                </p>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                                    <div>
+                                        <FieldLabel hint="PDB chain identifier — usually A, B, C. Case-insensitive, stored as uppercase.">
+                                            Chain ID
+                                        </FieldLabel>
+                                        <input
+                                            type="text"
+                                            maxLength={2}
+                                            value={bindingSiteResidues.chain}
+                                            onChange={(e) =>
+                                                onBindingSiteResiduesChange({
+                                                    ...bindingSiteResidues,
+                                                    chain: e.target.value.toUpperCase(),
+                                                })
+                                            }
+                                            className="input w-full text-sm font-mono uppercase"
+                                            placeholder="A"
+                                        />
+                                    </div>
+                                    <div>
+                                        <FieldLabel hint="First residue number in the binding pocket. Use PyMOL residue IDs from the ATOM records.">
+                                            Residue Start
+                                        </FieldLabel>
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            value={bindingSiteResidues.residue_start}
+                                            onChange={(e) =>
+                                                onBindingSiteResiduesChange({
+                                                    ...bindingSiteResidues,
+                                                    residue_start: parseInt(e.target.value) || 1,
+                                                })
+                                            }
+                                            className="input w-full text-sm font-mono"
+                                            placeholder="100"
+                                        />
+                                    </div>
+                                    <div>
+                                        <FieldLabel hint="Last residue number in the binding pocket range.">
+                                            Residue End
+                                        </FieldLabel>
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            value={bindingSiteResidues.residue_end}
+                                            onChange={(e) =>
+                                                onBindingSiteResiduesChange({
+                                                    ...bindingSiteResidues,
+                                                    residue_end: parseInt(e.target.value) || 1,
+                                                })
+                                            }
+                                            className="input w-full text-sm font-mono"
+                                            placeholder="200"
+                                        />
+                                    </div>
+                                </div>
+                                {bindingSiteResidues.residue_end > 0 && bindingSiteResidues.residue_start > 0 && bindingSiteResidues.residue_end < bindingSiteResidues.residue_start && (
+                                    <p className="text-[11px] text-red-400 mt-3 flex items-center gap-1.5">
+                                        <AlertTriangle className="w-3 h-3 shrink-0" />
+                                        Residue End must be ≥ Residue Start.
+                                    </p>
+                                )}
+                                <p className="text-[11px] text-gray-600 mt-4">
+                                    Tip: The backend will compute the geometric centre of all Cα atoms in this range and use it as the docking box centre.
+                                </p>
+                            </div>
+                        )}
                     </section>
 
                 </div>
