@@ -181,15 +181,61 @@ const getComplexityLabel = (score: number): { label: string; color: string } => 
 
 // ── Tooltip ───────────────────────────────────────────────────────────────────
 
-function Tip({ text }: { text: string }) {
+interface TooltipBubbleProps {
+    text: string
+    widthClass?: string
+    align?: 'center' | 'left'
+    iconClassName?: string
+    className?: string
+}
+
+function TooltipBubble({
+    text,
+    widthClass = 'w-56',
+    align = 'center',
+    iconClassName = 'w-3 h-3 text-gray-600 hover:text-gray-400',
+    className = '',
+}: TooltipBubbleProps) {
+    const [open, setOpen] = useState(false)
+
+    const bubblePosition =
+        align === 'left'
+            ? 'left-0'
+            : 'left-1/2 -translate-x-1/2'
+
     return (
-        <span className="group relative inline-flex items-center ml-1 cursor-help">
-            <Info className="w-3 h-3 text-gray-600 group-hover:text-gray-400 transition-colors" />
-            <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-56 bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-2 text-xs text-gray-300 invisible group-hover:visible z-50 pointer-events-none leading-relaxed shadow-xl">
-                {text}
-            </span>
+        <span
+            className={`relative inline-flex items-center ml-1 ${className}`}
+            onMouseEnter={() => setOpen(true)}
+            onMouseLeave={() => setOpen(false)}
+            onFocus={() => setOpen(true)}
+            onBlur={() => setOpen(false)}
+        >
+            <button
+                type="button"
+                className="inline-flex items-center justify-center cursor-help"
+                onClick={(e) => {
+                    e.stopPropagation()
+                    setOpen(v => !v)
+                }}
+                aria-label="Show info"
+            >
+                <Info className={`${iconClassName} transition-colors`} />
+            </button>
+
+            {open && (
+                <span
+                    className={`absolute bottom-full ${bubblePosition} mb-1.5 ${widthClass} rounded-lg border border-gray-700 bg-gray-900 px-2.5 py-2 text-xs leading-relaxed text-gray-300 shadow-xl z-50 pointer-events-none`}
+                >
+                    {text}
+                </span>
+            )}
         </span>
     )
+}
+
+function Tip({ text }: { text: string }) {
+    return <TooltipBubble text={text} widthClass="w-56" align="center" />
 }
 
 // ── ADMET Flag Card ───────────────────────────────────────────────────────────
@@ -245,6 +291,7 @@ interface DownloadBtnProps {
 function DownloadBtn({ label, fileType, tooltip, jobId, compoundIndex }: DownloadBtnProps) {
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
+    const [tooltipOpen, setTooltipOpen] = useState(false)
 
     const handleClick = async () => {
         setLoading(true)
@@ -261,9 +308,15 @@ function DownloadBtn({ label, fileType, tooltip, jobId, compoundIndex }: Downloa
     }
 
     return (
-        <div className="group relative">
+        <div
+            className="relative"
+            onMouseEnter={() => !error && setTooltipOpen(true)}
+            onMouseLeave={() => setTooltipOpen(false)}
+        >
             <button
                 onClick={handleClick}
+                onFocus={() => !error && setTooltipOpen(true)}
+                onBlur={() => setTooltipOpen(false)}
                 disabled={loading}
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-colors ${error
                     ? 'border-red-700 bg-red-950/40 text-red-400 hover:bg-red-900/40'
@@ -273,10 +326,16 @@ function DownloadBtn({ label, fileType, tooltip, jobId, compoundIndex }: Downloa
                 {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
                 <span>{label}</span>
             </button>
-            {error
-                ? <div className="absolute bottom-full left-0 mb-1.5 w-64 bg-gray-900 border border-red-800 rounded-lg px-2.5 py-2 text-[11px] text-red-400 z-50 shadow-xl leading-relaxed">{error}</div>
-                : <span className="absolute bottom-full left-0 mb-1.5 w-60 bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-2 text-xs text-gray-300 invisible group-hover:visible z-50 pointer-events-none leading-relaxed shadow-xl">{tooltip}</span>
-            }
+
+            {error ? (
+                <div className="absolute bottom-full left-0 mb-1.5 w-64 bg-gray-900 border border-red-800 rounded-lg px-2.5 py-2 text-[11px] text-red-400 z-50 shadow-xl leading-relaxed">
+                    {error}
+                </div>
+            ) : tooltipOpen ? (
+                <span className="absolute bottom-full left-0 mb-1.5 w-60 bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-2 text-xs text-gray-300 z-50 pointer-events-none leading-relaxed shadow-xl">
+                    {tooltip}
+                </span>
+            ) : null}
         </div>
     )
 }
@@ -337,6 +396,7 @@ function EndpointTable({ endpoints }: { endpoints: ADMETEndpointValue[] }) {
                     </button>
                 ))}
             </div>
+
             <div className="overflow-x-auto rounded-lg border border-gray-700">
                 <table className="w-full text-xs">
                     <thead>
@@ -367,12 +427,13 @@ function EndpointTable({ endpoints }: { endpoints: ADMETEndpointValue[] }) {
                                             <span className="text-[9px] uppercase tracking-wider text-red-500 border border-red-900 rounded px-1 py-0.5">hard fail</span>
                                         )}
                                         {ep.interpretation && (
-                                            <span className="group relative inline-flex items-center cursor-help">
-                                                <Info className="w-3 h-3 text-gray-700 group-hover:text-gray-500 transition-colors" />
-                                                <span className="absolute bottom-full left-0 mb-1.5 w-60 bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-2 text-xs text-gray-300 invisible group-hover:visible z-50 pointer-events-none leading-relaxed shadow-xl">
-                                                    {ep.interpretation}
-                                                </span>
-                                            </span>
+                                            <TooltipBubble
+                                                text={ep.interpretation}
+                                                widthClass="w-60"
+                                                align="left"
+                                                iconClassName="w-3 h-3 text-gray-700 hover:text-gray-500"
+                                                className="ml-0"
+                                            />
                                         )}
                                     </div>
                                 </td>
@@ -719,7 +780,7 @@ function RetrosynthesisPanel({ retro }: { retro: ExtendedRetrosynthesisResult })
     const complexityInfo = getComplexityLabel(retro.complexity_score)
 
     return (
-        <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
+        <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700 overflow-visible">
             <div className="flex items-center gap-1.5 mb-3">
                 <GitBranch className="w-3.5 h-3.5 text-gray-500" />
                 <p className="text-xs font-medium text-gray-300 uppercase tracking-wider">Retrosynthesis</p>
@@ -820,7 +881,6 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
     const admet = compound.admet as ExtendedADMET | null | undefined
     const retro = compound.retrosynthesis as ExtendedRetrosynthesisResult | null | undefined
 
-    // ── Safe clipboard copy (no crash on HTTP or sandboxed) ──────────────────
     const copySmiles = useCallback(() => {
         try {
             if (navigator?.clipboard?.writeText) {
@@ -847,11 +907,9 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
             setCopied(true)
             setTimeout(() => setCopied(false), 2000)
         } catch {
-            // Silent fail
         }
     }, [compound.canonical_smiles])
 
-    // ── Safe expand ──────────────────────────────────────────────────────────
     const handleExpand = useCallback(() => {
         const willExpand = !expanded
         setExpanded(willExpand)
@@ -861,7 +919,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
             setBreakdownLoading(true)
             getScoreBreakdown(jobId, index)
                 .then(data => setBreakdown(data))
-                .catch(() => { /* Non-critical */ })
+                .catch(() => { })
                 .finally(() => setBreakdownLoading(false))
         }
     }, [expanded, breakdown, jobId, index])
@@ -874,12 +932,10 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
 
     const flagCount = admet?.flags?.length ?? admet?.flag_summary?.length ?? 0
 
-    // suppress unused imports
     void getScoreColor; void Beaker
 
     return (
-        <div className="card-hover animate-fade-in">
-            {/* Compact row */}
+        <div className="card-hover animate-fade-in overflow-visible">
             <div className="flex items-center gap-4">
                 <div className="flex-shrink-0 text-center">
                     <div className={`score-ring ${ringStyle}`}>{score.toFixed(0)}</div>
@@ -940,9 +996,8 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                 </button>
             </div>
 
-            {/* Expanded detail */}
             {expanded && (
-                <div className="mt-4 pt-4 border-t border-gray-800 space-y-5 animate-slide-up">
+                <div className="mt-4 pt-4 border-t border-gray-800 space-y-5 animate-slide-up overflow-visible">
                     {expandError && (
                         <div className="flex items-center gap-2 text-xs text-red-400 bg-red-950/30 border border-red-900/50 rounded-lg px-3 py-2">
                             <XCircle className="w-3.5 h-3.5 flex-shrink-0" />
@@ -958,9 +1013,8 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {/* Drug-likeness */}
                         {compound.lipinski && (
-                            <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
+                            <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700 overflow-visible">
                                 <div className="flex items-center gap-1.5 mb-2">
                                     <FlaskConical className="w-3.5 h-3.5 text-gray-500" />
                                     <p className="text-xs font-medium text-gray-300 uppercase tracking-wider">Drug-likeness</p>
@@ -995,9 +1049,8 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                             </div>
                         )}
 
-                        {/* ADMET compact panel */}
                         {admet && (
-                            <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
+                            <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700 overflow-visible">
                                 <div className="flex items-center justify-between mb-2">
                                     <div className="flex items-center gap-1.5">
                                         <Activity className="w-3.5 h-3.5 text-gray-500" />
@@ -1035,9 +1088,8 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                         )}
                     </div>
 
-                    {/* Docking */}
                     {compound.docking && (
-                        <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700">
+                        <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700 overflow-visible">
                             <div className="flex items-center gap-1.5 mb-2">
                                 <Dna className="w-3.5 h-3.5 text-gray-500" />
                                 <p className="text-xs font-medium text-gray-300 uppercase tracking-wider">Vina Docking</p>
@@ -1092,21 +1144,18 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                         </div>
                     )}
 
-                    {/* Retrosynthesis */}
                     {retro && <RetrosynthesisPanel retro={retro} />}
-
-                    {/* Full ADMET report */}
                     {admet && <FullADMETReport admet={admet} />}
 
-                    {/* Score breakdown */}
                     {breakdownLoading && (
                         <div className="flex items-center gap-2 text-xs text-gray-600">
                             <div className="w-3 h-3 border border-gray-600 border-t-gray-400 rounded-full animate-spin" />
                             Loading score breakdown...
                         </div>
                     )}
+
                     {breakdown && !breakdownLoading && (
-                        <div>
+                        <div className="overflow-visible">
                             <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Score Breakdown</p>
                             <div className="space-y-2">
                                 {Object.entries(breakdown)
@@ -1117,6 +1166,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                         const contribution = item.contribution ?? 0
                                         const maxPossible = item.max_possible ?? 0
                                         const pct = maxPossible > 0 ? (contribution / maxPossible) * 100 : 0
+
                                         return (
                                             <div key={key}>
                                                 <div className="flex justify-between text-xs mb-0.5 items-center">
@@ -1137,6 +1187,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                         )
                                     })}
                             </div>
+
                             {(breakdown as Record<string, unknown>).mw_fragment_penalty === true && (
                                 <p className="text-xs text-yellow-500 mt-2">⚠ Fragment penalty applied — MW &lt; 200 Da, score halved.</p>
                             )}
