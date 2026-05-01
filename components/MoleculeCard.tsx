@@ -266,8 +266,8 @@ function DownloadBtn({ label, fileType, tooltip, jobId, compoundIndex }: Downloa
                 onClick={handleClick}
                 disabled={loading}
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-colors ${error
-                        ? 'border-red-700 bg-red-950/40 text-red-400 hover:bg-red-900/40'
-                        : 'border-gray-700 bg-gray-800/60 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                    ? 'border-red-700 bg-red-950/40 text-red-400 hover:bg-red-900/40'
+                    : 'border-gray-700 bg-gray-800/60 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
                     } disabled:opacity-60 disabled:cursor-not-allowed`}
             >
                 {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
@@ -326,8 +326,8 @@ function EndpointTable({ endpoints }: { endpoints: ADMETEndpointValue[] }) {
                         key={cat}
                         onClick={() => setActiveCategory(cat)}
                         className={`px-2 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wider border transition-colors flex items-center gap-1 ${activeCategory === cat
-                                ? 'bg-gray-700 border-gray-500 text-gray-200'
-                                : 'border-gray-700 text-gray-500 hover:border-gray-600 hover:text-gray-400'
+                            ? 'bg-gray-700 border-gray-500 text-gray-200'
+                            : 'border-gray-700 text-gray-500 hover:border-gray-600 hover:text-gray-400'
                             }`}
                     >
                         {cat === 'all' ? 'All' : CATEGORY_LABELS[cat]}
@@ -337,7 +337,6 @@ function EndpointTable({ endpoints }: { endpoints: ADMETEndpointValue[] }) {
                     </button>
                 ))}
             </div>
-
             <div className="overflow-x-auto rounded-lg border border-gray-700">
                 <table className="w-full text-xs">
                     <thead>
@@ -354,10 +353,10 @@ function EndpointTable({ endpoints }: { endpoints: ADMETEndpointValue[] }) {
                             <tr
                                 key={ep.key}
                                 className={`border-b border-gray-800 last:border-0 transition-colors ${ep.triggered
-                                        ? ep.severity === 'high'
-                                            ? 'bg-red-950/20 hover:bg-red-950/30'
-                                            : 'bg-yellow-950/10 hover:bg-yellow-950/20'
-                                        : 'hover:bg-gray-800/40'
+                                    ? ep.severity === 'high'
+                                        ? 'bg-red-950/20 hover:bg-red-950/30'
+                                        : 'bg-yellow-950/10 hover:bg-yellow-950/20'
+                                    : 'hover:bg-gray-800/40'
                                     }`}
                                 title={ep.interpretation ?? ''}
                             >
@@ -734,7 +733,7 @@ function RetrosynthesisPanel({ retro }: { retro: ExtendedRetrosynthesisResult })
                             <span className="text-gray-500">Synthesis steps</span>
                             <span className="text-gray-200 font-medium">{retro.num_steps}</span>
                         </div>
-                        {retro.sa_score !== undefined && retro.sa_score > 0 && (
+                        {retro.sa_score !== undefined && retro.sa_score !== null && retro.sa_score > 0 && (
                             <div className="flex justify-between text-xs">
                                 <span className="text-gray-500 flex items-center">
                                     SA Score <Tip text="Synthetic Accessibility Score: 1.0 = trivially easy, 10.0 = practically impossible. Below 3.5: easy, 3.5–6.0: feasible, above 6.0: hard/infeasible." />
@@ -791,7 +790,7 @@ function RetrosynthesisPanel({ retro }: { retro: ExtendedRetrosynthesisResult })
                             {retro.synthesis_summary
                                 ? <p className="text-xs text-red-300/60 leading-relaxed">{retro.synthesis_summary}</p>
                                 : <p className="text-xs text-red-300/60">SA Score too high — molecular complexity exceeds practical synthesis limits.</p>}
-                            {retro.sa_score !== undefined && retro.sa_score > 0 && (
+                            {retro.sa_score !== undefined && retro.sa_score !== null && retro.sa_score > 0 && (
                                 <p className="text-[10px] text-red-500/70 mt-1 font-mono">SA Score: {retro.sa_score.toFixed(2)}</p>
                             )}
                         </div>
@@ -826,7 +825,6 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
         try {
             if (navigator?.clipboard?.writeText) {
                 navigator.clipboard.writeText(compound.canonical_smiles).catch(() => {
-                    // Fallback: execCommand
                     const el = document.createElement('textarea')
                     el.value = compound.canonical_smiles
                     el.style.position = 'fixed'
@@ -849,11 +847,11 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
             setCopied(true)
             setTimeout(() => setCopied(false), 2000)
         } catch {
-            // Silent fail — clipboard is non-critical
+            // Silent fail
         }
     }, [compound.canonical_smiles])
 
-    // ── Safe expand (wrapped async, never crashes the card) ──────────────────
+    // ── Safe expand ──────────────────────────────────────────────────────────
     const handleExpand = useCallback(() => {
         const willExpand = !expanded
         setExpanded(willExpand)
@@ -863,10 +861,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
             setBreakdownLoading(true)
             getScoreBreakdown(jobId, index)
                 .then(data => setBreakdown(data))
-                .catch(() => {
-                    // Non-critical — score breakdown is display-only
-                    // Do NOT re-throw or call setState in a way that crashes the tree
-                })
+                .catch(() => { /* Non-critical */ })
                 .finally(() => setBreakdownLoading(false))
         }
     }, [expanded, breakdown, jobId, index])
@@ -1015,7 +1010,6 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                         </span>
                                     )}
                                 </div>
-
                                 <div className="space-y-1.5">
                                     {([
                                         { label: 'hERG inhibition', value: formatProbability(admet.herg_inhibition), risk: admet.herg_inhibition > 0.5, tip: 'Ideal <30%. Blocking the hERG channel causes fatal heart arrhythmia — the #1 reason drugs are withdrawn from markets.' },
@@ -1119,8 +1113,10 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                     .filter(([k]) => k !== 'final_score' && k !== 'mw_fragment_penalty')
                                     .map(([key, val]) => {
                                         if (!val || typeof val !== 'object') return null
-                                        const item = val as { raw: string; contribution: number; max_possible: number }
-                                        const pct = (item.contribution / item.max_possible) * 100
+                                        const item = val as { raw: string; contribution: number | null; max_possible: number | null }
+                                        const contribution = item.contribution ?? 0
+                                        const maxPossible = item.max_possible ?? 0
+                                        const pct = maxPossible > 0 ? (contribution / maxPossible) * 100 : 0
                                         return (
                                             <div key={key}>
                                                 <div className="flex justify-between text-xs mb-0.5 items-center">
@@ -1128,12 +1124,12 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                                         {key.replace(/_/g, ' ')}
                                                         {BREAKDOWN_TIPS[key] && <Tip text={BREAKDOWN_TIPS[key]} />}
                                                     </span>
-                                                    <span className="text-gray-400 font-mono">{item.contribution.toFixed(1)}/{item.max_possible}</span>
+                                                    <span className="text-gray-400 font-mono">{contribution.toFixed(1)}/{maxPossible}</span>
                                                 </div>
                                                 <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
                                                     <div
                                                         className={`h-full rounded-full transition-all ${pct >= 70 ? 'bg-emerald-600' : pct >= 40 ? 'bg-yellow-600' : 'bg-red-700'}`}
-                                                        style={{ width: `${pct}%` }}
+                                                        style={{ width: `${Math.min(pct, 100)}%` }}
                                                     />
                                                 </div>
                                                 <p className="text-xs text-gray-600 mt-0.5">{item.raw}</p>
