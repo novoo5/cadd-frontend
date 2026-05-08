@@ -114,21 +114,23 @@ const BREAKDOWN_TIPS: Record<string, string> = {
     docking_affinity: 'Max 50pts. Normalized from −4 (no binding) to −12 kcal/mol (exceptional). More negative affinity → more points.',
     admet_safety: 'Max 20pts. 0 flags = full score. Each toxicity flag reduces the score. hERG cardiac risk applies an additional penalty.',
     solubility: 'Max 10pts. logS ≥ −3 = 10pts (high), −4 to −3 = 8pts, −5 to −4 = 5pts, < −5 = 2pts.',
-    binding_prefilter: 'Max 10pts. GNN-predicted binding affinity × model confidence. Lower confidence = fewer points even if affinity is high.',
     synthesis_ease: 'Max 10pts. Based on SA Score complexity. Simpler molecules score higher; complexity > 15 gets near-full points.',
+    drug_likeness: 'Lipinski rule-of-5 score contribution. Violations reduce the base score.',
 }
 
-// max_possible per category — used when backend sends 0 for active tools
+// Keys that are completely hidden from the breakdown display
+const HIDDEN_KEYS = new Set(['binding_prefilter', 'final_score', 'mw_fragment_penalty'])
+
+// Keys with a known max possible score (used if backend sends 0)
 const BREAKDOWN_MAX: Record<string, number> = {
     docking_affinity: 50,
     admet_safety: 20,
     solubility: 10,
-    binding_prefilter: 10,
     synthesis_ease: 10,
-    drug_likeness: 0,
-    weight_redistribution: 0,
-    penalties: 0,
 }
+
+// Adjustment rows: shown always (0 means no penalty applied), no progress bar
+const ADJUSTMENT_KEYS = new Set(['weight_redistribution', 'drug_likeness', 'penalties'])
 
 const DIFFICULTY_STYLES: Record<string, string> = {
     easy: 'text-emerald-400', moderate: 'text-yellow-400',
@@ -238,6 +240,110 @@ function TooltipBubble({
 
 function Tip({ text }: { text: string }) {
     return <TooltipBubble text={text} widthClass="w-56" align="center" />
+}
+
+// ── Drug Likeness Raw Parser ──────────────────────────────────────────────────
+// Parses "Violations=1 | LogS=-3.51 (Low) | LogP=1.83 | MW=336.2 Da"
+// into colored chips
+
+interface DrugLikenessChip {
+    label: string
+    value: string
+    status: 'good' | 'warn' | 'bad' | 'neutral'
+}
+
+function parseDrugLikenessRaw(raw: string): DrugLikenessChip[] {
+    const chips: DrugLikenessChip[] = []
+    const parts = raw.split('|').map(s => s.trim()).filter(Boolean)
+
+    for (const part of parts) {
+        // Violations=N
+        const vMatch = part.match(/^Violations=(\d+)$/)
+        if (vMatch) {
+            const n = parseInt(vMatch[1])
+            chips.push({
+                label: 'Violations',
+                value: vMatch[1],
+                status: n === 0 ? 'good' : n === 1 ? 'warn' : 'bad',
+            })
+            continue
+        }
+
+        // LogS=-3.51 (Low) or LogS=-2.1 (High)
+        const logsMatch = part.match(/^LogS=([-\d.]+)(?:\s*\(([^)]+)\))?$/)
+        if (logsMatch) {
+            const val = parseFloat(logsMatch[1])
+            const label = logsMatch[2] ?? ''
+            const lowerLabel = label.toLowerCase()
+            let status: DrugLikenessChip['status'] = 'neutral'
+            if (lowerLabel === 'high') status = 'good'
+            else if (lowerLabel === 'medium') status = 'warn'
+            else if (lowerLabel === 'low') status = 'warn'
+            else if (lowerLabel === 'very low') status = 'bad'
+            else status = val >= -3 ? 'good' : val >= -4 ? 'warn' : 'bad'
+            chips.push({ label: 'LogS', value: `${logsMatch[1]}${label ? ` (${label})` : ''}`, status })
+            continue
+        }
+
+        // LogP=1.83
+        const logpMatch = part.match(/^LogP=([-\d.]+)$/)
+        if (logpMatch) {
+            const val = parseFloat(logpMatch[1])
+            chips.push({
+                label: 'LogP',
+                value: logpMatch[1],
+                status: val <= 4.5 ? 'good' : val <= 5.5 ? 'warn' : 'bad',
+            })
+            continue
+        }
+
+        // MW=336.2 Da
+        const mwMatch = part.match(/^MW=([\d.]+)\s*(Da)?$/)
+        if (mwMatch) {
+            const val = parseFloat(mwMatch[1])
+            chips.push({
+                label: 'MW',
+                value: `${mwMatch[1]} Da`,
+                status: val <= 500 ? 'good' : val <= 600 ? 'warn' : 'bad',
+            })
+            continue
+        }
+
+        // Fallback: show as neutral chip
+        chips.push({ label: part, value: '', status: 'neutral' })
+    }
+
+    return chips
+}
+
+const CHIP_STYLES: Record<DrugLikenessChip['status'], string> = {
+    good: 'bg-emerald-950/50 border-emerald-800/60 text-emerald-400',
+    warn: 'bg-yellow-950/40 border-yellow-800/50 text-yellow-400',
+    bad: 'bg-red-950/40 border-red-800/50 text-red-400',
+    neutral: 'bg-gray-800/50 border-gray-700 text-gray-400',
+}
+
+function DrugLikenessChips({ raw }: { raw: string }) {
+    if (!raw) return null
+    const chips = parseDrugLikenessRaw(raw)
+    if (chips.length === 0) return <p className="text-[10px] text-gray-600 leading-relaxed">{raw}</p>
+
+    return (
+        <div className="flex flex-wrap gap-1.5 mt-1">
+            {chips.map((chip, i) => (
+                <span
+                    key={i}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${CHIP_STYLES[chip.status]}`}
+                >
+                    {chip.status === 'good' && <CheckCircle2 className="w-2.5 h-2.5 flex-shrink-0" />}
+                    {chip.status === 'warn' && <AlertTriangle className="w-2.5 h-2.5 flex-shrink-0" />}
+                    {chip.status === 'bad' && <AlertCircle className="w-2.5 h-2.5 flex-shrink-0" />}
+                    <span className="text-gray-500 mr-0.5">{chip.label}</span>
+                    {chip.value && <span className="font-mono">{chip.value}</span>}
+                </span>
+            ))}
+        </div>
+    )
 }
 
 // ── ADMET Flag Card ───────────────────────────────────────────────────────────
@@ -854,25 +960,20 @@ function RetrosynthesisPanel({ retro }: { retro: ExtendedRetrosynthesisResult })
 
 // ── Score Breakdown helpers ───────────────────────────────────────────────────
 
-// Categories that are "adjustment" rows — not tools that can be skipped.
-// They show even if contribution is 0 because 0 is a meaningful value (no penalty applied).
-const ADJUSTMENT_KEYS = new Set(['weight_redistribution', 'drug_likeness', 'penalties'])
-
 interface BreakdownItem {
     key: string
     raw: string
     contribution: number
     maxPossible: number
     isAdjustment: boolean
-    wasUsed: boolean
 }
 
 function parseBreakdown(breakdown: ScoreBreakdown): BreakdownItem[] {
-    const SKIP_KEYS = new Set(['final_score', 'mw_fragment_penalty'])
     const items: BreakdownItem[] = []
 
     for (const [key, val] of Object.entries(breakdown)) {
-        if (SKIP_KEYS.has(key)) continue
+        // Completely skip hidden keys
+        if (HIDDEN_KEYS.has(key)) continue
         if (!val || typeof val !== 'object') continue
 
         const raw = val as { raw?: string | null; contribution?: number | null; max_possible?: number | null }
@@ -884,16 +985,14 @@ function parseBreakdown(breakdown: ScoreBreakdown): BreakdownItem[] {
         const knownMax = BREAKDOWN_MAX[key] ?? 0
         const maxPossible = backendMax > 0 ? backendMax : knownMax
 
-        // A scoring tool "wasn't used" when:
-        // - it's NOT an adjustment row
-        // - contribution is exactly 0
-        // - maxPossible is 0 (backend sent nothing meaningful)
-        // - raw string is empty / zero-ish
         const rawStr = (raw.raw ?? '').trim()
-        const rawIsEmpty = rawStr === '' || rawStr === '0' || rawStr === '0.0' || rawStr === 'N/A' || rawStr === 'n/a'
-        const wasUsed = isAdjustment || maxPossible > 0 || contribution !== 0 || !rawIsEmpty
 
-        items.push({ key, raw: rawStr, contribution, maxPossible, isAdjustment, wasUsed })
+        // Skip non-adjustment rows that have no data at all
+        // (contribution=0, maxPossible=0, raw empty) — genuinely unused tool
+        const rawIsEmpty = rawStr === '' || rawStr === '0' || rawStr === '0.0' || rawStr === 'N/A' || rawStr === 'n/a'
+        if (!isAdjustment && maxPossible === 0 && contribution === 0 && rawIsEmpty) continue
+
+        items.push({ key, raw: rawStr, contribution, maxPossible, isAdjustment })
     }
 
     return items
@@ -1190,60 +1289,73 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
 
                     {breakdown && !breakdownLoading && (() => {
                         const items = parseBreakdown(breakdown)
-                        const usedItems = items.filter(it => it.wasUsed)
-                        const totalMax = usedItems.reduce((s, it) => s + it.maxPossible, 0)
-                        const totalContrib = usedItems.reduce((s, it) => s + it.contribution, 0)
+                        // Only sum max from scoring tools (not adjustments) for the denominator
+                        const totalMax = items
+                            .filter(it => !it.isAdjustment && it.maxPossible > 0)
+                            .reduce((s, it) => s + it.maxPossible, 0)
+                        const finalScore = (breakdown as Record<string, unknown>).final_score !== undefined
+                            ? Number((breakdown as Record<string, unknown>).final_score)
+                            : null
 
                         return (
                             <div className="overflow-visible">
-                                {/* Header row with final score */}
+                                {/* Header */}
                                 <div className="flex items-center justify-between mb-3">
                                     <p className="text-xs text-gray-500 uppercase tracking-wider">Score Breakdown</p>
-                                    <span className="text-xs font-mono text-gray-400">
+                                    <span className="text-xs font-mono">
                                         <span className={score >= 70 ? 'text-emerald-400' : score >= 45 ? 'text-yellow-400' : 'text-red-400'}>
-                                            {(breakdown as Record<string, unknown>).final_score !== undefined
-                                                ? Number((breakdown as Record<string, unknown>).final_score).toFixed(1)
-                                                : totalContrib.toFixed(1)}
+                                            {finalScore !== null ? finalScore.toFixed(1) : score.toFixed(1)}
                                         </span>
-                                        {totalMax > 0 && <span className="text-gray-600"> / {totalMax} pts</span>}
+                                        {totalMax > 0 && (
+                                            <span className="text-gray-600"> / {totalMax} pts</span>
+                                        )}
                                     </span>
                                 </div>
 
                                 <div className="space-y-3">
-                                    {usedItems.map(it => {
-                                        const pct = it.maxPossible > 0 ? (it.contribution / it.maxPossible) * 100 : 0
+                                    {items.map(it => {
+                                        const pct = it.maxPossible > 0 ? Math.min((it.contribution / it.maxPossible) * 100, 100) : 0
                                         const isNegative = it.contribution < 0
+                                        const isDrugLikeness = it.key === 'drug_likeness'
 
                                         return (
                                             <div key={it.key}>
+                                                {/* Row header */}
                                                 <div className="flex justify-between text-xs mb-1 items-center">
                                                     <span className="text-gray-500 capitalize flex items-center">
                                                         {it.key.replace(/_/g, ' ')}
                                                         {BREAKDOWN_TIPS[it.key] && <Tip text={BREAKDOWN_TIPS[it.key]} />}
                                                     </span>
-                                                    <span className={`font-mono ${isNegative ? 'text-red-400' : it.contribution > 0 ? 'text-gray-300' : 'text-gray-600'}`}>
-                                                        {isNegative ? '' : ''}{it.contribution.toFixed(1)}
+                                                    <span className={`font-mono ${isNegative
+                                                            ? 'text-red-400'
+                                                            : it.maxPossible > 0
+                                                                ? it.contribution >= it.maxPossible * 0.7
+                                                                    ? 'text-emerald-400'
+                                                                    : it.contribution >= it.maxPossible * 0.4
+                                                                        ? 'text-yellow-400'
+                                                                        : 'text-red-400'
+                                                                : 'text-gray-400'
+                                                        }`}>
+                                                        {it.contribution.toFixed(1)}
                                                         {it.maxPossible > 0
                                                             ? <span className="text-gray-600"> / {it.maxPossible} pts</span>
-                                                            : it.isAdjustment
-                                                                ? <span className="text-gray-700"> pts</span>
-                                                                : null}
+                                                            : <span className="text-gray-700"> pts</span>}
                                                     </span>
                                                 </div>
 
-                                                {/* Progress bar — only for scoring tools with a positive max */}
+                                                {/* Progress bar for scoring tools */}
                                                 {it.maxPossible > 0 && !isNegative && (
-                                                    <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden mb-1">
+                                                    <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden mb-1.5">
                                                         <div
                                                             className={`h-full rounded-full transition-all ${pct >= 70 ? 'bg-emerald-600' : pct >= 40 ? 'bg-yellow-600' : 'bg-red-700'}`}
-                                                            style={{ width: `${Math.min(pct, 100)}%` }}
+                                                            style={{ width: `${pct}%` }}
                                                         />
                                                     </div>
                                                 )}
 
-                                                {/* Negative adjustment bar */}
+                                                {/* Penalty bar */}
                                                 {isNegative && (
-                                                    <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden mb-1">
+                                                    <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden mb-1.5">
                                                         <div
                                                             className="h-full rounded-full bg-red-800 transition-all"
                                                             style={{ width: `${Math.min(Math.abs(it.contribution) * 2, 100)}%` }}
@@ -1251,8 +1363,11 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                                     </div>
                                                 )}
 
+                                                {/* Raw value: drug_likeness gets colored chips, others get plain text */}
                                                 {it.raw && (
-                                                    <p className="text-[10px] text-gray-600 leading-relaxed">{it.raw}</p>
+                                                    isDrugLikeness
+                                                        ? <DrugLikenessChips raw={it.raw} />
+                                                        : <p className="text-[10px] text-gray-600 leading-relaxed">{it.raw}</p>
                                                 )}
                                             </div>
                                         )
