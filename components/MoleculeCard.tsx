@@ -118,6 +118,18 @@ const BREAKDOWN_TIPS: Record<string, string> = {
     synthesis_ease: 'Max 10pts. Based on SA Score complexity. Simpler molecules score higher; complexity > 15 gets near-full points.',
 }
 
+// max_possible per category — used when backend sends 0 for active tools
+const BREAKDOWN_MAX: Record<string, number> = {
+    docking_affinity: 50,
+    admet_safety: 20,
+    solubility: 10,
+    binding_prefilter: 10,
+    synthesis_ease: 10,
+    drug_likeness: 0,
+    weight_redistribution: 0,
+    penalties: 0,
+}
+
 const DIFFICULTY_STYLES: Record<string, string> = {
     easy: 'text-emerald-400', moderate: 'text-yellow-400',
     hard: 'text-orange-400', infeasible: 'text-red-400', unknown: 'text-gray-500',
@@ -197,11 +209,7 @@ function TooltipBubble({
     className = '',
 }: TooltipBubbleProps) {
     const [open, setOpen] = useState(false)
-
-    const bubblePosition =
-        align === 'left'
-            ? 'left-0'
-            : 'left-1/2 -translate-x-1/2'
+    const bubblePosition = align === 'left' ? 'left-0' : 'left-1/2 -translate-x-1/2'
 
     return (
         <span
@@ -214,19 +222,13 @@ function TooltipBubble({
             <button
                 type="button"
                 className="inline-flex items-center justify-center cursor-help"
-                onClick={(e) => {
-                    e.stopPropagation()
-                    setOpen(v => !v)
-                }}
+                onClick={(e) => { e.stopPropagation(); setOpen(v => !v) }}
                 aria-label="Show info"
             >
                 <Info className={`${iconClassName} transition-colors`} />
             </button>
-
             {open && (
-                <span
-                    className={`absolute bottom-full ${bubblePosition} mb-1.5 ${widthClass} rounded-lg border border-gray-700 bg-gray-900 px-2.5 py-2 text-xs leading-relaxed text-gray-300 shadow-xl z-50 pointer-events-none`}
-                >
+                <span className={`absolute bottom-full ${bubblePosition} mb-1.5 ${widthClass} rounded-lg border border-gray-700 bg-gray-900 px-2.5 py-2 text-xs leading-relaxed text-gray-300 shadow-xl z-50 pointer-events-none`}>
                     {text}
                 </span>
             )}
@@ -261,7 +263,6 @@ function ADMETFlagCard({ flag }: { flag: ADMETFlagDetail }) {
                     {flag.severity}
                 </span>
             </div>
-
             {open && (
                 <div className="mt-2 pt-2 border-t border-current/20 space-y-1.5 animate-slide-up">
                     <div className="flex items-start gap-1.5">
@@ -326,7 +327,6 @@ function DownloadBtn({ label, fileType, tooltip, jobId, compoundIndex }: Downloa
                 {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
                 <span>{label}</span>
             </button>
-
             {error ? (
                 <div className="absolute bottom-full left-0 mb-1.5 w-64 bg-gray-900 border border-red-800 rounded-lg px-2.5 py-2 text-[11px] text-red-400 z-50 shadow-xl leading-relaxed">
                     {error}
@@ -396,7 +396,6 @@ function EndpointTable({ endpoints }: { endpoints: ADMETEndpointValue[] }) {
                     </button>
                 ))}
             </div>
-
             <div className="overflow-x-auto rounded-lg border border-gray-700">
                 <table className="w-full text-xs">
                     <thead>
@@ -532,14 +531,12 @@ function FullADMETReport({ admet }: { admet: ExtendedADMET }) {
                 <p className="text-xs font-medium text-gray-300 uppercase tracking-wider">Full ADMET Report</p>
                 <span className="text-[10px] text-gray-600 ml-auto">Powered by ADMET-AI · 41 TDC datasets</span>
             </div>
-
             <div className="p-3 space-y-4">
                 {hasNarrative && (
                     <div className="space-y-2">
                         {admet.narrative!.map((block, i) => <NarrativeCard key={i} block={block} />)}
                     </div>
                 )}
-
                 {hasEndpointTable && (
                     <div>
                         <button
@@ -562,7 +559,6 @@ function FullADMETReport({ admet }: { admet: ExtendedADMET }) {
                         )}
                     </div>
                 )}
-
                 {hasThresholds && (
                     <div>
                         <button
@@ -585,7 +581,6 @@ function FullADMETReport({ admet }: { admet: ExtendedADMET }) {
                         )}
                     </div>
                 )}
-
                 {hasDecisionBasis && (
                     <div>
                         <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-1.5">Decision Basis</p>
@@ -697,14 +692,12 @@ function RetroStepCard({ step }: { step: ExtendedRetrosynthesisStep }) {
                             )}
                         </div>
                     )}
-
                     {step.conditions && (
                         <div>
                             <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Conditions</p>
                             <p className="text-xs text-gray-400 leading-relaxed">{step.conditions}</p>
                         </div>
                     )}
-
                     {(step.reagents?.length ?? 0) > 0 && (
                         <div>
                             <div className="flex items-center gap-1.5 mb-1.5">
@@ -718,7 +711,6 @@ function RetroStepCard({ step }: { step: ExtendedRetrosynthesisStep }) {
                             </div>
                         </div>
                     )}
-
                     {(step.solvents?.length ?? 0) > 0 && (
                         <div>
                             <div className="flex items-center gap-1.5 mb-1.5">
@@ -732,7 +724,6 @@ function RetroStepCard({ step }: { step: ExtendedRetrosynthesisStep }) {
                             </div>
                         </div>
                     )}
-
                     {step.starting_materials.length > 0 && (
                         <div>
                             <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-1.5">Starting Materials</p>
@@ -745,7 +736,6 @@ function RetroStepCard({ step }: { step: ExtendedRetrosynthesisStep }) {
                             </div>
                         </div>
                     )}
-
                     {step.protocol_text && (
                         <div className="border border-gray-700 rounded-lg overflow-hidden">
                             <button
@@ -862,6 +852,53 @@ function RetrosynthesisPanel({ retro }: { retro: ExtendedRetrosynthesisResult })
     )
 }
 
+// ── Score Breakdown helpers ───────────────────────────────────────────────────
+
+// Categories that are "adjustment" rows — not tools that can be skipped.
+// They show even if contribution is 0 because 0 is a meaningful value (no penalty applied).
+const ADJUSTMENT_KEYS = new Set(['weight_redistribution', 'drug_likeness', 'penalties'])
+
+interface BreakdownItem {
+    key: string
+    raw: string
+    contribution: number
+    maxPossible: number
+    isAdjustment: boolean
+    wasUsed: boolean
+}
+
+function parseBreakdown(breakdown: ScoreBreakdown): BreakdownItem[] {
+    const SKIP_KEYS = new Set(['final_score', 'mw_fragment_penalty'])
+    const items: BreakdownItem[] = []
+
+    for (const [key, val] of Object.entries(breakdown)) {
+        if (SKIP_KEYS.has(key)) continue
+        if (!val || typeof val !== 'object') continue
+
+        const raw = val as { raw?: string | null; contribution?: number | null; max_possible?: number | null }
+        const contribution = raw.contribution ?? 0
+        const isAdjustment = ADJUSTMENT_KEYS.has(key)
+
+        // Resolve max_possible: use backend value if > 0, else fall back to known constant
+        const backendMax = raw.max_possible ?? 0
+        const knownMax = BREAKDOWN_MAX[key] ?? 0
+        const maxPossible = backendMax > 0 ? backendMax : knownMax
+
+        // A scoring tool "wasn't used" when:
+        // - it's NOT an adjustment row
+        // - contribution is exactly 0
+        // - maxPossible is 0 (backend sent nothing meaningful)
+        // - raw string is empty / zero-ish
+        const rawStr = (raw.raw ?? '').trim()
+        const rawIsEmpty = rawStr === '' || rawStr === '0' || rawStr === '0.0' || rawStr === 'N/A' || rawStr === 'n/a'
+        const wasUsed = isAdjustment || maxPossible > 0 || contribution !== 0 || !rawIsEmpty
+
+        items.push({ key, raw: rawStr, contribution, maxPossible, isAdjustment, wasUsed })
+    }
+
+    return items
+}
+
 // ── Main Card ─────────────────────────────────────────────────────────────────
 
 interface MoleculeCardProps {
@@ -906,15 +943,13 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
             }
             setCopied(true)
             setTimeout(() => setCopied(false), 2000)
-        } catch {
-        }
+        } catch { }
     }, [compound.canonical_smiles])
 
     const handleExpand = useCallback(() => {
         const willExpand = !expanded
         setExpanded(willExpand)
         setExpandError(null)
-
         if (willExpand && !breakdown) {
             setBreakdownLoading(true)
             getScoreBreakdown(jobId, index)
@@ -1077,7 +1112,6 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                         </div>
                                     ))}
                                 </div>
-
                                 {admet.flags.length > 0 && (
                                     <div className="mt-2 pt-2 border-t border-gray-700 space-y-1.5">
                                         <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Flags · click to expand</p>
@@ -1154,45 +1188,83 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                         </div>
                     )}
 
-                    {breakdown && !breakdownLoading && (
-                        <div className="overflow-visible">
-                            <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Score Breakdown</p>
-                            <div className="space-y-2">
-                                {Object.entries(breakdown)
-                                    .filter(([k]) => k !== 'final_score' && k !== 'mw_fragment_penalty')
-                                    .map(([key, val]) => {
-                                        if (!val || typeof val !== 'object') return null
-                                        const item = val as { raw: string; contribution: number | null; max_possible: number | null }
-                                        const contribution = item.contribution ?? 0
-                                        const maxPossible = item.max_possible ?? 0
-                                        const pct = maxPossible > 0 ? (contribution / maxPossible) * 100 : 0
+                    {breakdown && !breakdownLoading && (() => {
+                        const items = parseBreakdown(breakdown)
+                        const usedItems = items.filter(it => it.wasUsed)
+                        const totalMax = usedItems.reduce((s, it) => s + it.maxPossible, 0)
+                        const totalContrib = usedItems.reduce((s, it) => s + it.contribution, 0)
+
+                        return (
+                            <div className="overflow-visible">
+                                {/* Header row with final score */}
+                                <div className="flex items-center justify-between mb-3">
+                                    <p className="text-xs text-gray-500 uppercase tracking-wider">Score Breakdown</p>
+                                    <span className="text-xs font-mono text-gray-400">
+                                        <span className={score >= 70 ? 'text-emerald-400' : score >= 45 ? 'text-yellow-400' : 'text-red-400'}>
+                                            {(breakdown as Record<string, unknown>).final_score !== undefined
+                                                ? Number((breakdown as Record<string, unknown>).final_score).toFixed(1)
+                                                : totalContrib.toFixed(1)}
+                                        </span>
+                                        {totalMax > 0 && <span className="text-gray-600"> / {totalMax} pts</span>}
+                                    </span>
+                                </div>
+
+                                <div className="space-y-3">
+                                    {usedItems.map(it => {
+                                        const pct = it.maxPossible > 0 ? (it.contribution / it.maxPossible) * 100 : 0
+                                        const isNegative = it.contribution < 0
 
                                         return (
-                                            <div key={key}>
-                                                <div className="flex justify-between text-xs mb-0.5 items-center">
+                                            <div key={it.key}>
+                                                <div className="flex justify-between text-xs mb-1 items-center">
                                                     <span className="text-gray-500 capitalize flex items-center">
-                                                        {key.replace(/_/g, ' ')}
-                                                        {BREAKDOWN_TIPS[key] && <Tip text={BREAKDOWN_TIPS[key]} />}
+                                                        {it.key.replace(/_/g, ' ')}
+                                                        {BREAKDOWN_TIPS[it.key] && <Tip text={BREAKDOWN_TIPS[it.key]} />}
                                                     </span>
-                                                    <span className="text-gray-400 font-mono">{contribution.toFixed(1)}/{maxPossible}</span>
+                                                    <span className={`font-mono ${isNegative ? 'text-red-400' : it.contribution > 0 ? 'text-gray-300' : 'text-gray-600'}`}>
+                                                        {isNegative ? '' : ''}{it.contribution.toFixed(1)}
+                                                        {it.maxPossible > 0
+                                                            ? <span className="text-gray-600"> / {it.maxPossible} pts</span>
+                                                            : it.isAdjustment
+                                                                ? <span className="text-gray-700"> pts</span>
+                                                                : null}
+                                                    </span>
                                                 </div>
-                                                <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                                                    <div
-                                                        className={`h-full rounded-full transition-all ${pct >= 70 ? 'bg-emerald-600' : pct >= 40 ? 'bg-yellow-600' : 'bg-red-700'}`}
-                                                        style={{ width: `${Math.min(pct, 100)}%` }}
-                                                    />
-                                                </div>
-                                                <p className="text-xs text-gray-600 mt-0.5">{item.raw}</p>
+
+                                                {/* Progress bar — only for scoring tools with a positive max */}
+                                                {it.maxPossible > 0 && !isNegative && (
+                                                    <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden mb-1">
+                                                        <div
+                                                            className={`h-full rounded-full transition-all ${pct >= 70 ? 'bg-emerald-600' : pct >= 40 ? 'bg-yellow-600' : 'bg-red-700'}`}
+                                                            style={{ width: `${Math.min(pct, 100)}%` }}
+                                                        />
+                                                    </div>
+                                                )}
+
+                                                {/* Negative adjustment bar */}
+                                                {isNegative && (
+                                                    <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden mb-1">
+                                                        <div
+                                                            className="h-full rounded-full bg-red-800 transition-all"
+                                                            style={{ width: `${Math.min(Math.abs(it.contribution) * 2, 100)}%` }}
+                                                        />
+                                                    </div>
+                                                )}
+
+                                                {it.raw && (
+                                                    <p className="text-[10px] text-gray-600 leading-relaxed">{it.raw}</p>
+                                                )}
                                             </div>
                                         )
                                     })}
-                            </div>
+                                </div>
 
-                            {(breakdown as Record<string, unknown>).mw_fragment_penalty === true && (
-                                <p className="text-xs text-yellow-500 mt-2">⚠ Fragment penalty applied — MW &lt; 200 Da, score halved.</p>
-                            )}
-                        </div>
-                    )}
+                                {(breakdown as Record<string, unknown>).mw_fragment_penalty === true && (
+                                    <p className="text-xs text-yellow-500 mt-3">⚠ Fragment penalty applied — MW &lt; 200 Da, score halved.</p>
+                                )}
+                            </div>
+                        )
+                    })()}
                 </div>
             )}
         </div>
