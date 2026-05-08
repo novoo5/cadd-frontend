@@ -95,24 +95,17 @@ interface ExtendedRetrosynthesisResult {
     estimated_total_yield?: string | null
 }
 
-// ── Breakdown item shape from backend v4 ─────────────────────────────────────
-// Each scored entry has: score_0_to_1, raw, contribution, max_possible,
-// base_weight, effective_weight, step_active
-// binding_prefilter has gate_only:true, contribution:0, max_possible:0
-// weight_redistribution and penalties are info-only objects
-// final_score is a plain number
-
 interface BreakdownEntry {
     score_0_to_1?: number
     raw?: string
     contribution?: number
-    max_possible?: number        // = effective_weight (whole-number pts)
+    max_possible?: number
     effective_weight?: number
     base_weight?: number
     step_active?: boolean
     explanation?: string
-    gate_only?: boolean          // binding_prefilter sentinel
-    passed?: boolean             // binding_prefilter gate result
+    gate_only?: boolean
+    passed?: boolean
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -131,15 +124,13 @@ const THRESHOLD_KEY_LABELS: Record<string, string> = {
 }
 
 const BREAKDOWN_TIPS: Record<string, string> = {
-    docking_affinity: 'Up to 51 pts. Normalised from −3 (no binding) to −12 kcal/mol (exceptional). More negative affinity = more points.',
-    admet_safety: 'Up to 28 pts. 0 flags = full score. Each toxicity flag reduces the score. hERG and hepatotoxicity apply a ×2 hard-fail multiplier.',
-    drug_likeness: 'Up to 11 pts. Weighted combination: Lipinski violations (50%) + logS solubility (30%) + logP optimality (20%). LogS ≥ −3: Excellent; ≥ −4: Good; ≥ −5: Borderline; < −6: Insoluble.',
+    docking_affinity: 'Up to 51 pts (when all steps active). Normalised from −3 (no binding) to −12 kcal/mol (exceptional). Weight redistributes to this component when other steps are disabled.',
+    admet_safety: 'Up to 28 pts. 0 flags = full score. Each toxicity flag reduces the score. hERG and hepatotoxicity apply a ×2 hard-fail multiplier. Disabled = weight redistributed.',
+    drug_likeness: 'Up to 11 pts. Weighted combination: Lipinski violations (50%) + logS solubility (30%) + logP optimality (20%).',
     synthesis_ease: 'Up to 10 pts. 60% normalised SA-Score complexity + 40% step-count penalty.',
 }
 
-// Keys rendered as informational panels, not scored rows
 const INFO_ONLY_KEYS = new Set(['weight_redistribution', 'penalties', 'final_score'])
-// binding_prefilter is handled separately (gate_only block)
 
 const DIFFICULTY_STYLES: Record<string, string> = {
     easy: 'text-emerald-400', moderate: 'text-yellow-400',
@@ -154,10 +145,24 @@ const REACTION_TYPE_LABELS: Record<string, string> = {
     fgi: 'Functional Group Interconversion',
 }
 
-// Display order for scored rows
 const SCORED_KEY_ORDER = ['docking_affinity', 'admet_safety', 'drug_likeness', 'synthesis_ease']
 
 // ── Style helpers ─────────────────────────────────────────────────────────────
+
+/** Score color based on percentage of maximum (works regardless of redistribution) */
+function getScoreColorClass(score: number, maxPossible: number): string {
+    const pct = maxPossible > 0 ? (score / maxPossible) * 100 : 0
+    if (pct >= 70) return 'text-emerald-400'
+    if (pct >= 45) return 'text-yellow-400'
+    return 'text-red-400'
+}
+
+function getRingStyle(score: number, maxPossible: number): string {
+    const pct = maxPossible > 0 ? (score / maxPossible) * 100 : 0
+    if (pct >= 70) return 'border-emerald-500 text-emerald-400'
+    if (pct >= 45) return 'border-yellow-500 text-yellow-400'
+    return 'border-red-600 text-red-400'
+}
 
 const getRiskStyle = (risk: OverallRisk) => {
     switch (risk) {
@@ -216,29 +221,17 @@ interface TooltipBubbleProps {
 }
 
 function TooltipBubble({
-    text,
-    widthClass = 'w-56',
-    align = 'center',
-    iconClassName = 'w-3 h-3 text-gray-600 hover:text-gray-400',
-    className = '',
+    text, widthClass = 'w-56', align = 'center',
+    iconClassName = 'w-3 h-3 text-gray-600 hover:text-gray-400', className = '',
 }: TooltipBubbleProps) {
     const [open, setOpen] = useState(false)
     const bubblePosition = align === 'left' ? 'left-0' : 'left-1/2 -translate-x-1/2'
-
     return (
-        <span
-            className={`relative inline-flex items-center ml-1 ${className}`}
-            onMouseEnter={() => setOpen(true)}
-            onMouseLeave={() => setOpen(false)}
-            onFocus={() => setOpen(true)}
-            onBlur={() => setOpen(false)}
-        >
-            <button
-                type="button"
-                className="inline-flex items-center justify-center cursor-help"
-                onClick={(e) => { e.stopPropagation(); setOpen(v => !v) }}
-                aria-label="Show info"
-            >
+        <span className={`relative inline-flex items-center ml-1 ${className}`}
+            onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}
+            onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}>
+            <button type="button" className="inline-flex items-center justify-center cursor-help"
+                onClick={(e) => { e.stopPropagation(); setOpen(v => !v) }} aria-label="Show info">
                 <Info className={`${iconClassName} transition-colors`} />
             </button>
             {open && (
@@ -265,7 +258,6 @@ interface DrugLikenessChip {
 function parseDrugLikenessRaw(raw: string): DrugLikenessChip[] {
     const chips: DrugLikenessChip[] = []
     const parts = raw.split('|').map(s => s.trim()).filter(Boolean)
-
     for (const part of parts) {
         const vMatch = part.match(/^Violations=(\d+)$/)
         if (vMatch) {
@@ -273,44 +265,28 @@ function parseDrugLikenessRaw(raw: string): DrugLikenessChip[] {
             chips.push({ label: 'Violations', value: vMatch[1], status: n === 0 ? 'good' : n === 1 ? 'warn' : 'bad' })
             continue
         }
-
         const logsMatch = part.match(/^LogS=([-\d.]+)(?:\s*\(([^)]+)\))?$/)
         if (logsMatch) {
             const val = parseFloat(logsMatch[1])
             const label = logsMatch[2] ?? ''
-            const lowerLabel = label.toLowerCase()
-            let status: DrugLikenessChip['status'] = 'neutral'
-            // v4 thresholds: ≥-3 Excellent, ≥-4 Good, ≥-5 Borderline, ≥-6 Poor, <-6 Insoluble
-            if (lowerLabel === 'high' || val >= -3) status = 'good'
-            else if (val >= -4) status = 'good'
-            else if (val >= -5) status = 'warn'
-            else status = 'bad'
+            const status: DrugLikenessChip['status'] = val >= -4 ? 'good' : val >= -5 ? 'warn' : 'bad'
             chips.push({ label: 'LogS', value: `${logsMatch[1]}${label ? ` (${label})` : ''}`, status })
             continue
         }
-
         const logpMatch = part.match(/^LogP=([-\d.]+)$/)
         if (logpMatch) {
             const val = parseFloat(logpMatch[1])
-            // ideal 1.0-3.0, ok 0-5, penalty above 5
-            chips.push({
-                label: 'LogP',
-                value: logpMatch[1],
-                status: val >= 1.0 && val <= 3.0 ? 'good' : val >= 0 && val <= 5.0 ? 'warn' : 'bad',
-            })
+            chips.push({ label: 'LogP', value: logpMatch[1], status: val >= 1.0 && val <= 3.0 ? 'good' : val >= 0 && val <= 5.0 ? 'warn' : 'bad' })
             continue
         }
-
         const mwMatch = part.match(/^MW=([\d.]+)\s*(Da)?$/)
         if (mwMatch) {
             const val = parseFloat(mwMatch[1])
             chips.push({ label: 'MW', value: `${mwMatch[1]} Da`, status: val <= 500 ? 'good' : val <= 600 ? 'warn' : 'bad' })
             continue
         }
-
         chips.push({ label: part, value: '', status: 'neutral' })
     }
-
     return chips
 }
 
@@ -345,7 +321,6 @@ function DrugLikenessChips({ raw }: { raw: string }) {
 function ADMETFlagCard({ flag }: { flag: ADMETFlagDetail }) {
     const [open, setOpen] = useState(false)
     const severityClasses = getFlagSeverityColor(flag.severity)
-
     return (
         <div className={`rounded-lg border px-2.5 py-2 text-xs ${severityClasses}`}>
             <div className="flex items-center justify-between gap-2 cursor-pointer select-none" onClick={() => setOpen(!open)}>
@@ -358,14 +333,8 @@ function ADMETFlagCard({ flag }: { flag: ADMETFlagDetail }) {
             </div>
             {open && (
                 <div className="mt-2 pt-2 border-t border-current/20 space-y-1.5 animate-slide-up">
-                    <div className="flex items-start gap-1.5">
-                        <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0 opacity-60" />
-                        <p className="opacity-80">{flag.implication}</p>
-                    </div>
-                    <div className="flex items-start gap-1.5">
-                        <Lightbulb className="w-3 h-3 mt-0.5 flex-shrink-0 opacity-60" />
-                        <p className="opacity-70">{flag.recommendation}</p>
-                    </div>
+                    <div className="flex items-start gap-1.5"><AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0 opacity-60" /><p className="opacity-80">{flag.implication}</p></div>
+                    <div className="flex items-start gap-1.5"><Lightbulb className="w-3 h-3 mt-0.5 flex-shrink-0 opacity-60" /><p className="opacity-70">{flag.recommendation}</p></div>
                 </div>
             )}
         </div>
@@ -375,47 +344,30 @@ function ADMETFlagCard({ flag }: { flag: ADMETFlagDetail }) {
 // ── Download Button ───────────────────────────────────────────────────────────
 
 interface DownloadBtnProps {
-    label: string
-    fileType: DockingFileType
-    tooltip: string
-    jobId: string
-    compoundIndex: number
+    label: string; fileType: DockingFileType; tooltip: string; jobId: string; compoundIndex: number
 }
 
 function DownloadBtn({ label, fileType, tooltip, jobId, compoundIndex }: DownloadBtnProps) {
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [tooltipOpen, setTooltipOpen] = useState(false)
-
     const handleClick = async () => {
         setLoading(true); setError(null)
         try { await downloadDockingFile(jobId, compoundIndex, fileType) }
-        catch (e: unknown) {
-            const msg = e instanceof Error ? e.message : 'Download failed'
-            setError(msg)
-            setTimeout(() => setError(null), 5000)
-        } finally { setLoading(false) }
+        catch (e: unknown) { const msg = e instanceof Error ? e.message : 'Download failed'; setError(msg); setTimeout(() => setError(null), 5000) }
+        finally { setLoading(false) }
     }
-
     return (
         <div className="relative" onMouseEnter={() => !error && setTooltipOpen(true)} onMouseLeave={() => setTooltipOpen(false)}>
-            <button
-                onClick={handleClick}
-                onFocus={() => !error && setTooltipOpen(true)}
-                onBlur={() => setTooltipOpen(false)}
+            <button onClick={handleClick} onFocus={() => !error && setTooltipOpen(true)} onBlur={() => setTooltipOpen(false)}
                 disabled={loading}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-colors ${error
-                    ? 'border-red-700 bg-red-950/40 text-red-400 hover:bg-red-900/40'
-                    : 'border-gray-700 bg-gray-800/60 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
-                    } disabled:opacity-60 disabled:cursor-not-allowed`}
-            >
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border transition-colors ${error ? 'border-red-700 bg-red-950/40 text-red-400 hover:bg-red-900/40' : 'border-gray-700 bg-gray-800/60 text-gray-400 hover:bg-gray-700 hover:text-gray-200'} disabled:opacity-60 disabled:cursor-not-allowed`}>
                 {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
                 <span>{label}</span>
             </button>
             {error
                 ? <div className="absolute bottom-full left-0 mb-1.5 w-64 bg-gray-900 border border-red-800 rounded-lg px-2.5 py-2 text-[11px] text-red-400 z-50 shadow-xl leading-relaxed">{error}</div>
-                : tooltipOpen
-                    ? <span className="absolute bottom-full left-0 mb-1.5 w-60 bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-2 text-xs text-gray-300 z-50 pointer-events-none leading-relaxed shadow-xl">{tooltip}</span>
+                : tooltipOpen ? <span className="absolute bottom-full left-0 mb-1.5 w-60 bg-gray-900 border border-gray-700 rounded-lg px-2.5 py-2 text-xs text-gray-300 z-50 pointer-events-none leading-relaxed shadow-xl">{tooltip}</span>
                     : null}
         </div>
     )
@@ -442,19 +394,13 @@ function NarrativeCard({ block }: { block: ADMETNarrativeBlock }) {
 
 function EndpointTable({ endpoints }: { endpoints: ADMETEndpointValue[] }) {
     const [activeCategory, setActiveCategory] = useState<string>('all')
-
     const { presentCategories, categoryCounts } = useMemo(() => {
         const counts: Record<string, number> = { all: endpoints.length }
         endpoints.forEach(e => { counts[e.category] = (counts[e.category] ?? 0) + 1 })
         const cats = new Set(endpoints.map(e => e.category))
         return { presentCategories: ['all', ...CATEGORY_ORDER.filter(c => cats.has(c))], categoryCounts: counts }
     }, [endpoints])
-
-    const filtered = useMemo(
-        () => activeCategory === 'all' ? endpoints : endpoints.filter(e => e.category === activeCategory),
-        [endpoints, activeCategory],
-    )
-
+    const filtered = useMemo(() => activeCategory === 'all' ? endpoints : endpoints.filter(e => e.category === activeCategory), [endpoints, activeCategory])
     return (
         <div>
             <div className="flex flex-wrap gap-1.5 mb-3">
@@ -551,14 +497,11 @@ function ActiveThresholdsPanel({ thresholds }: { thresholds: Record<string, ADME
 function FullADMETReport({ admet }: { admet: ExtendedADMET }) {
     const [endpointTableOpen, setEndpointTableOpen] = useState(false)
     const [thresholdsOpen, setThresholdsOpen] = useState(false)
-
     const hasNarrative = (admet.narrative?.length ?? 0) > 0
     const hasEndpointTable = (admet.endpoint_table?.length ?? 0) > 0
     const hasDecisionBasis = (admet.decision_basis?.length ?? 0) > 0
     const hasThresholds = Object.keys(admet.thresholds_used ?? {}).length > 0
-
     if (!hasNarrative && !hasEndpointTable && !hasDecisionBasis) return null
-
     return (
         <div className="rounded-lg bg-gray-800/30 border border-gray-700 overflow-hidden">
             <div className="flex items-center gap-2 px-3 py-2.5 border-b border-gray-700 bg-gray-800/50">
@@ -571,11 +514,7 @@ function FullADMETReport({ admet }: { admet: ExtendedADMET }) {
                 {hasEndpointTable && (
                     <div>
                         <button onClick={() => setEndpointTableOpen(v => !v)} className="w-full flex items-center justify-between gap-2 text-xs text-gray-400 hover:text-gray-300 transition-colors py-1">
-                            <div className="flex items-center gap-1.5">
-                                <Layers className="w-3.5 h-3.5 text-gray-500" />
-                                <span className="font-medium uppercase tracking-wider">Full Endpoint Table</span>
-                                <span className="text-gray-600">{admet.endpoint_table!.length} properties</span>
-                            </div>
+                            <div className="flex items-center gap-1.5"><Layers className="w-3.5 h-3.5 text-gray-500" /><span className="font-medium uppercase tracking-wider">Full Endpoint Table</span><span className="text-gray-600">{admet.endpoint_table!.length} properties</span></div>
                             {endpointTableOpen ? <ChevronUp className="w-3.5 h-3.5 text-gray-600" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-600" />}
                         </button>
                         {endpointTableOpen && <div className="mt-2 animate-slide-up"><EndpointTable endpoints={admet.endpoint_table!} /></div>}
@@ -584,11 +523,7 @@ function FullADMETReport({ admet }: { admet: ExtendedADMET }) {
                 {hasThresholds && (
                     <div>
                         <button onClick={() => setThresholdsOpen(v => !v)} className="w-full flex items-center justify-between gap-2 text-xs text-gray-400 hover:text-gray-300 transition-colors py-1">
-                            <div className="flex items-center gap-1.5">
-                                <SlidersHorizontal className="w-3.5 h-3.5 text-gray-500" />
-                                <span className="font-medium uppercase tracking-wider">Active Thresholds</span>
-                                <span className="text-gray-600 text-[10px]">applied to this result</span>
-                            </div>
+                            <div className="flex items-center gap-1.5"><SlidersHorizontal className="w-3.5 h-3.5 text-gray-500" /><span className="font-medium uppercase tracking-wider">Active Thresholds</span><span className="text-gray-600 text-[10px]">applied to this result</span></div>
                             {thresholdsOpen ? <ChevronUp className="w-3.5 h-3.5 text-gray-600" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-600" />}
                         </button>
                         {thresholdsOpen && <div className="mt-2 animate-slide-up"><ActiveThresholdsPanel thresholds={admet.thresholds_used!} /></div>}
@@ -600,8 +535,7 @@ function FullADMETReport({ admet }: { admet: ExtendedADMET }) {
                         <ul className="space-y-0.5">
                             {admet.decision_basis!.map((reason, i) => (
                                 <li key={i} className="flex items-start gap-1.5 text-xs text-gray-600">
-                                    <span className="mt-1.5 w-1 h-1 rounded-full bg-gray-700 flex-shrink-0" />
-                                    {reason}
+                                    <span className="mt-1.5 w-1 h-1 rounded-full bg-gray-700 flex-shrink-0" />{reason}
                                 </li>
                             ))}
                         </ul>
@@ -617,9 +551,7 @@ function FullADMETReport({ admet }: { admet: ExtendedADMET }) {
 function RetroStepCard({ step }: { step: ExtendedRetrosynthesisStep }) {
     const [open, setOpen] = useState(false)
     const [protocolOpen, setProtocolOpen] = useState(false)
-
     const hasDetails = !!(step.reaction_name || step.reagents?.length || step.conditions || step.temperature || step.duration || step.yield_estimate || step.protocol_text)
-
     return (
         <div className="rounded-lg border border-gray-700 bg-gray-900/40 overflow-hidden">
             <div className={`flex items-center justify-between gap-3 px-3 py-2.5 ${hasDetails ? 'cursor-pointer hover:bg-gray-800/40 transition-colors' : ''}`} onClick={() => hasDetails && setOpen(!open)}>
@@ -631,16 +563,11 @@ function RetroStepCard({ step }: { step: ExtendedRetrosynthesisStep }) {
                     </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                    {step.yield_estimate && (
-                        <span className="flex items-center gap-0.5 text-[10px] text-emerald-500 bg-emerald-950/40 border border-emerald-900/60 rounded px-1.5 py-0.5">
-                            <Percent className="w-2.5 h-2.5" />{step.yield_estimate}
-                        </span>
-                    )}
+                    {step.yield_estimate && <span className="flex items-center gap-0.5 text-[10px] text-emerald-500 bg-emerald-950/40 border border-emerald-900/60 rounded px-1.5 py-0.5"><Percent className="w-2.5 h-2.5" />{step.yield_estimate}</span>}
                     <span className="text-[10px] text-gray-600">{(step.confidence * 100).toFixed(0)}% conf.</span>
                     {hasDetails && (open ? <ChevronUp className="w-3.5 h-3.5 text-gray-600" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-600" />)}
                 </div>
             </div>
-
             {step.schematic && (
                 <div className="px-3 pb-2.5 border-t border-gray-800/60">
                     <div className="flex items-center gap-1.5 mt-2 overflow-x-auto">
@@ -653,29 +580,13 @@ function RetroStepCard({ step }: { step: ExtendedRetrosynthesisStep }) {
                     </div>
                 </div>
             )}
-
             {open && hasDetails && (
                 <div className="px-3 pb-3 border-t border-gray-800 space-y-3 pt-3 animate-slide-up">
                     {(step.temperature || step.duration || step.conditions) && (
                         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                            {step.temperature && (
-                                <div className="flex items-center gap-1.5 text-xs">
-                                    <Thermometer className="w-3 h-3 text-gray-600 flex-shrink-0" />
-                                    <div><p className="text-[10px] text-gray-600 uppercase tracking-wider">Temp</p><p className="text-gray-300">{step.temperature}</p></div>
-                                </div>
-                            )}
-                            {step.duration && (
-                                <div className="flex items-center gap-1.5 text-xs">
-                                    <Clock className="w-3 h-3 text-gray-600 flex-shrink-0" />
-                                    <div><p className="text-[10px] text-gray-600 uppercase tracking-wider">Duration</p><p className="text-gray-300">{step.duration}</p></div>
-                                </div>
-                            )}
-                            {step.yield_estimate && (
-                                <div className="flex items-center gap-1.5 text-xs">
-                                    <Percent className="w-3 h-3 text-gray-600 flex-shrink-0" />
-                                    <div><p className="text-[10px] text-gray-600 uppercase tracking-wider">Est. Yield</p><p className="text-emerald-400">{step.yield_estimate}</p></div>
-                                </div>
-                            )}
+                            {step.temperature && <div className="flex items-center gap-1.5 text-xs"><Thermometer className="w-3 h-3 text-gray-600 flex-shrink-0" /><div><p className="text-[10px] text-gray-600 uppercase tracking-wider">Temp</p><p className="text-gray-300">{step.temperature}</p></div></div>}
+                            {step.duration && <div className="flex items-center gap-1.5 text-xs"><Clock className="w-3 h-3 text-gray-600 flex-shrink-0" /><div><p className="text-[10px] text-gray-600 uppercase tracking-wider">Duration</p><p className="text-gray-300">{step.duration}</p></div></div>}
+                            {step.yield_estimate && <div className="flex items-center gap-1.5 text-xs"><Percent className="w-3 h-3 text-gray-600 flex-shrink-0" /><div><p className="text-[10px] text-gray-600 uppercase tracking-wider">Est. Yield</p><p className="text-emerald-400">{step.yield_estimate}</p></div></div>}
                         </div>
                     )}
                     {step.conditions && <div><p className="text-[10px] text-gray-600 uppercase tracking-wider mb-1">Conditions</p><p className="text-xs text-gray-400 leading-relaxed">{step.conditions}</p></div>}
@@ -717,7 +628,6 @@ function RetroStepCard({ step }: { step: ExtendedRetrosynthesisStep }) {
 function RetrosynthesisPanel({ retro }: { retro: ExtendedRetrosynthesisResult }) {
     const difficultyColor = DIFFICULTY_STYLES[retro.difficulty_label ?? 'unknown'] ?? 'text-gray-500'
     const complexityInfo = getComplexityLabel(retro.complexity_score)
-
     return (
         <div className="p-3 rounded-lg bg-gray-800/50 border border-gray-700 overflow-visible">
             <div className="flex items-center gap-1.5 mb-3">
@@ -779,23 +689,19 @@ function RetrosynthesisPanel({ retro }: { retro: ExtendedRetrosynthesisResult })
     )
 }
 
-// ── Score Breakdown Parser ────────────────────────────────────────────────────
-// Reads the v4 breakdown dict from backend.
-// Scored rows: have contribution + max_possible (= effective_weight, a whole integer)
-// Gate-only row: binding_prefilter with gate_only:true — rendered as info pill
-// Info-only rows: weight_redistribution, penalties, final_score — skipped from scoring display
+// ── Breakdown Parser ──────────────────────────────────────────────────────────
 
 interface ParsedBreakdown {
     scoredRows: Array<{
         key: string
         entry: BreakdownEntry
-        contribution: number   // pts earned (float, e.g. 25.5)
-        maxPossible: number    // whole-number max pts (effective_weight)
+        contribution: number
+        maxPossible: number
         raw: string
-        pct: number            // 0-100
+        pct: number
     }>
-    gateRow: BreakdownEntry | null    // binding_prefilter info
-    totalMax: number                   // sum of all active maxPossible
+    gateRow: BreakdownEntry | null
+    totalMax: number        // sum of active effective_weights — the TRUE denominator
     finalScore: number | null
     penaltyApplied: boolean
     disabledComponents: string[]
@@ -803,37 +709,25 @@ interface ParsedBreakdown {
 
 function parseBreakdown(bd: ScoreBreakdown): ParsedBreakdown {
     const raw = bd as Record<string, unknown>
-
     const scoredRows: ParsedBreakdown['scoredRows'] = []
     let gateRow: BreakdownEntry | null = null
     let finalScore: number | null = null
     let penaltyApplied = false
     let disabledComponents: string[] = []
 
-    // final_score
-    if (typeof raw['final_score'] === 'number') {
-        finalScore = raw['final_score'] as number
-    }
+    if (typeof raw['final_score'] === 'number') finalScore = raw['final_score'] as number
 
-    // penalties
     const penalties = raw['penalties'] as Record<string, unknown> | undefined
-    if (penalties) {
-        penaltyApplied = Boolean(penalties['mw_fragment_penalty_applied'])
-    }
+    if (penalties) penaltyApplied = Boolean(penalties['mw_fragment_penalty_applied'])
 
-    // weight_redistribution
     const wr = raw['weight_redistribution'] as Record<string, unknown> | undefined
     if (wr?.disabled_components && Array.isArray(wr.disabled_components)) {
         disabledComponents = wr.disabled_components as string[]
     }
 
-    // binding_prefilter gate row
     const bpRaw = raw['binding_prefilter'] as BreakdownEntry | undefined
-    if (bpRaw?.gate_only) {
-        gateRow = bpRaw
-    }
+    if (bpRaw?.gate_only) gateRow = bpRaw
 
-    // Scored rows — iterate in defined order, then any extra keys
     const allKeys = Object.keys(raw)
     const orderedKeys = [
         ...SCORED_KEY_ORDER.filter(k => allKeys.includes(k)),
@@ -843,21 +737,21 @@ function parseBreakdown(bd: ScoreBreakdown): ParsedBreakdown {
     for (const key of orderedKeys) {
         const entry = raw[key] as BreakdownEntry | undefined
         if (!entry || typeof entry !== 'object') continue
-        if (entry.gate_only) continue                         // prefilter handled above
+        if (entry.gate_only) continue
         if (INFO_ONLY_KEYS.has(key)) continue
 
         const contribution = entry.contribution ?? 0
-        // max_possible = effective_weight (whole-number pts from backend v4)
         const maxPossible = entry.max_possible ?? entry.effective_weight ?? 0
         const rawStr = (entry.raw ?? '').trim()
         const pct = maxPossible > 0 ? Math.min((contribution / maxPossible) * 100, 100) : 0
 
-        // Skip rows where step is disabled (effective_weight = 0) and no contribution
+        // Skip fully disabled rows that contribute nothing
         if (maxPossible === 0 && contribution === 0 && entry.step_active === false) continue
 
         scoredRows.push({ key, entry, contribution, maxPossible, raw: rawStr, pct })
     }
 
+    // totalMax = sum of effective_weights of active scored rows — the real denominator
     const totalMax = scoredRows
         .filter(r => r.maxPossible > 0)
         .reduce((s, r) => s + r.maxPossible, 0)
@@ -871,9 +765,13 @@ interface MoleculeCardProps {
     compound: CompoundResult
     jobId: string
     index: number
+    /** Effective max score for this result (from ResultsTable/TopCandidate after breakdown loads) */
+    effectiveMax?: number
+    /** Called when breakdown loads so parent (ResultsTable/TopCandidate) can update its display */
+    onBreakdownLoaded?: (totalMax: number) => void
 }
 
-export default function MoleculeCard({ compound, jobId, index }: MoleculeCardProps) {
+export default function MoleculeCard({ compound, jobId, index, effectiveMax, onBreakdownLoaded }: MoleculeCardProps) {
     const [expanded, setExpanded] = useState(false)
     const [copied, setCopied] = useState(false)
     const [breakdown, setBreakdown] = useState<ScoreBreakdown | null>(null)
@@ -882,6 +780,16 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
     const score = compound.final_score ?? 0
     const admet = compound.admet as ExtendedADMET | null | undefined
     const retro = compound.retrosynthesis as ExtendedRetrosynthesisResult | null | undefined
+
+    const parsedBreakdown = useMemo(
+        () => breakdown ? parseBreakdown(breakdown) : null,
+        [breakdown],
+    )
+
+    // The authoritative denominator: use breakdown's totalMax if loaded,
+    // fallback to effectiveMax prop (passed from parent), fallback to 100
+    const displayMax = parsedBreakdown?.totalMax ?? effectiveMax ?? 100
+    const scorePct = displayMax > 0 ? (score / displayMax) * 100 : 0
 
     const copySmiles = useCallback(() => {
         try {
@@ -903,26 +811,37 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
         if (willExpand && !breakdown) {
             setBreakdownLoading(true)
             getScoreBreakdown(jobId, index)
-                .then(data => setBreakdown(data))
+                .then(data => {
+                    setBreakdown(data)
+                    // Notify parent of the real totalMax so it can fix "/ 100" displays
+                    if (onBreakdownLoaded) {
+                        const parsed = parseBreakdown(data)
+                        if (parsed.totalMax > 0 && parsed.totalMax !== 100) {
+                            onBreakdownLoaded(parsed.totalMax)
+                        }
+                    }
+                })
                 .catch(() => { })
                 .finally(() => setBreakdownLoading(false))
         }
-    }, [expanded, breakdown, jobId, index])
+    }, [expanded, breakdown, jobId, index, onBreakdownLoaded])
 
-    const ringStyle = score >= 70 ? 'border-emerald-500 text-emerald-400' : score >= 45 ? 'border-yellow-500 text-yellow-400' : 'border-red-600 text-red-400'
+    const ringStyle = getRingStyle(score, displayMax)
     const flagCount = admet?.flags?.length ?? admet?.flag_summary?.length ?? 0
-
-    const parsedBreakdown = useMemo(
-        () => breakdown ? parseBreakdown(breakdown) : null,
-        [breakdown],
-    )
+    const scoreColorClass = getScoreColorClass(score, displayMax)
 
     return (
         <div className="card-hover animate-fade-in overflow-visible">
             {/* ── Summary row ── */}
             <div className="flex items-center gap-4">
                 <div className="flex-shrink-0 text-center">
-                    <div className={`score-ring ${ringStyle}`}>{score.toFixed(0)}</div>
+                    <div className={`score-ring ${ringStyle}`}>
+                        <span>{score.toFixed(0)}</span>
+                        {/* Show denominator if not 100 — catches redistribution immediately */}
+                        {displayMax !== 100 && (
+                            <span className="block text-[8px] text-gray-500 leading-none mt-0.5">/ {displayMax}</span>
+                        )}
+                    </div>
                     <p className="text-xs text-gray-600 mt-1">#{compound.rank}</p>
                 </div>
                 <div className="flex-1 min-w-0">
@@ -978,11 +897,11 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                 </div>
                                 <div className="space-y-1.5">
                                     {([
-                                        { label: 'Mol. Weight', value: `${compound.lipinski.mw.toFixed(1)} Da`, ok: compound.lipinski.mw <= 500, tip: 'Ideal ≤500 Da. Heavier molecules struggle to cross cell membranes.' },
-                                        { label: 'LogP', value: compound.lipinski.logp.toFixed(2), ok: compound.lipinski.logp <= 4.5, tip: 'Ideal 1–3 (optimal), 0–5 (ok). Measures fat-solubility. Scoring penalises >5.' },
-                                        { label: 'H-bond donors', value: compound.lipinski.hbd, ok: compound.lipinski.hbd <= 5, tip: 'Ideal ≤5. -OH and -NH groups. Too many prevent gut absorption.' },
-                                        { label: 'H-bond acceptors', value: compound.lipinski.hba, ok: compound.lipinski.hba <= 10, tip: 'Ideal ≤10. N and O atoms. Too many reduce oral bioavailability.' },
-                                        { label: 'LogS solubility', value: compound.lipinski.logs.toFixed(2), ok: compound.lipinski.logs >= -4, tip: 'v4 scoring: ≥−3 Excellent (0.90), ≥−4 Good (0.75), ≥−5 Borderline (0.45), ≥−6 Poor (0.20), <−6 Insoluble (0.05).' },
+                                        { label: 'Mol. Weight', value: `${compound.lipinski.mw.toFixed(1)} Da`, ok: compound.lipinski.mw <= 500, tip: 'Ideal ≤500 Da.' },
+                                        { label: 'LogP', value: compound.lipinski.logp.toFixed(2), ok: compound.lipinski.logp <= 4.5, tip: 'Ideal 1–3. Scoring penalises >5.' },
+                                        { label: 'H-bond donors', value: compound.lipinski.hbd, ok: compound.lipinski.hbd <= 5, tip: 'Ideal ≤5.' },
+                                        { label: 'H-bond acceptors', value: compound.lipinski.hba, ok: compound.lipinski.hba <= 10, tip: 'Ideal ≤10.' },
+                                        { label: 'LogS solubility', value: compound.lipinski.logs.toFixed(2), ok: compound.lipinski.logs >= -4, tip: '≥−3 Excellent, ≥−4 Good, ≥−5 Borderline, ≥−6 Poor, <−6 Insoluble.' },
                                     ] as const).map(({ label, value, ok, tip }) => (
                                         <div key={label} className="flex justify-between text-xs items-center">
                                             <span className="text-gray-500 flex items-center">{label}<Tip text={tip} /></span>
@@ -991,7 +910,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                     ))}
                                 </div>
                                 <div className="flex justify-between text-xs pt-1 border-t border-gray-700 items-center mt-1">
-                                    <span className="text-gray-500 flex items-center">Solubility class <Tip text="High: logS ≥ −3, Low: −5 to −3, Very Low: < −5. Class is informational; actual scoring uses continuous logS breakpoints." /></span>
+                                    <span className="text-gray-500 flex items-center">Solubility class <Tip text="High: logS ≥ −3, Low: −5 to −3, Very Low: < −5." /></span>
                                     <span className={compound.lipinski.solubility_class === 'Very Low' ? 'text-red-400' : compound.lipinski.solubility_class === 'Low' ? 'text-yellow-400' : 'text-gray-300'}>{compound.lipinski.solubility_class}</span>
                                 </div>
                             </div>
@@ -1003,7 +922,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                     <div className="flex items-center gap-1.5">
                                         <Activity className="w-3.5 h-3.5 text-gray-500" />
                                         <p className="text-xs font-medium text-gray-300 uppercase tracking-wider">ADMET Profile</p>
-                                        <Tip text="Absorption, Distribution, Metabolism, Excretion, Toxicity — main reasons drugs fail clinical trials." />
+                                        <Tip text="Absorption, Distribution, Metabolism, Excretion, Toxicity." />
                                     </div>
                                     {admet.overall_risk && (
                                         <span className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border ${getRiskStyle(admet.overall_risk)}`}>
@@ -1013,11 +932,11 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                 </div>
                                 <div className="space-y-1.5">
                                     {([
-                                        { label: 'hERG inhibition', value: formatProbability(admet.herg_inhibition), risk: admet.herg_inhibition > 0.5, tip: 'Ideal <30%. Blocking hERG causes fatal arrhythmia — the #1 reason drugs are withdrawn post-market.' },
-                                        { label: 'Hepatotoxicity', value: formatProbability(admet.hepatotoxicity), risk: admet.hepatotoxicity > 0.5, tip: 'Ideal <30%. Liver damage probability. #1 reason drugs fail FDA approval after Phase II.' },
-                                        { label: 'Oral bioavailability', value: formatProbability(admet.oral_bioavailability), risk: admet.oral_bioavailability < 0.3, tip: 'Ideal >70%. Fraction of swallowed dose reaching bloodstream.' },
-                                        { label: 'BBB penetration', value: formatProbability(admet.bbb_penetration), risk: false, tip: 'Desirable for CNS drugs; liability for non-CNS.' },
-                                        { label: 'Caco-2 permeability', value: admet.caco2_permeability.toFixed(2), risk: admet.caco2_permeability < -5.15, tip: 'Ideal > −5.15. Models intestinal wall crossing. Key predictor of oral absorption.' },
+                                        { label: 'hERG inhibition', value: formatProbability(admet.herg_inhibition), risk: admet.herg_inhibition > 0.5, tip: 'Ideal <30%. Blocking hERG causes fatal arrhythmia.' },
+                                        { label: 'Hepatotoxicity', value: formatProbability(admet.hepatotoxicity), risk: admet.hepatotoxicity > 0.5, tip: 'Ideal <30%. Liver damage probability.' },
+                                        { label: 'Oral bioavailability', value: formatProbability(admet.oral_bioavailability), risk: admet.oral_bioavailability < 0.3, tip: 'Ideal >70%.' },
+                                        { label: 'BBB penetration', value: formatProbability(admet.bbb_penetration), risk: false, tip: 'Desirable for CNS drugs.' },
+                                        { label: 'Caco-2 permeability', value: admet.caco2_permeability.toFixed(2), risk: admet.caco2_permeability < -5.15, tip: 'Ideal > −5.15.' },
                                     ] as const).map(({ label, value, risk, tip }) => (
                                         <div key={label} className="flex justify-between text-xs items-center">
                                             <span className="text-gray-500 flex items-center">{label}<Tip text={tip} /></span>
@@ -1071,8 +990,8 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                 <p className="text-[10px] text-gray-600 uppercase tracking-wider mb-2 flex items-center gap-1"><Download className="w-3 h-3" /> Download docking files</p>
                                 <div className="flex flex-wrap gap-2">
                                     <DownloadBtn label="Raw .pdbqt" fileType="pdbqt" jobId={jobId} compoundIndex={index} tooltip="All Vina poses. Load in PyMOL or pass to PLIP manually." />
-                                    <DownloadBtn label="Pose 1+H .pdb" fileType="pose_pdb" jobId={jobId} compoundIndex={index} tooltip="Best pose only, hydrogens added via obabel. Ready for PLIP or PyMOL." />
-                                    <DownloadBtn label="PLIP Complex .pdb" fileType="complex_pdb" jobId={jobId} compoundIndex={index} tooltip="Receptor + docked ligand merged. Drop directly into PLIP — no manual merging." />
+                                    <DownloadBtn label="Pose 1+H .pdb" fileType="pose_pdb" jobId={jobId} compoundIndex={index} tooltip="Best pose only, hydrogens added via obabel." />
+                                    <DownloadBtn label="PLIP Complex .pdb" fileType="complex_pdb" jobId={jobId} compoundIndex={index} tooltip="Receptor + docked ligand merged. Drop directly into PLIP." />
                                 </div>
                             </div>
                         </div>
@@ -1093,14 +1012,20 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                         <div className="overflow-visible">
                             {/* Header */}
                             <div className="flex items-center justify-between mb-3">
-                                <p className="text-xs text-gray-500 uppercase tracking-wider">Score Breakdown</p>
+                                <div className="flex items-center gap-2">
+                                    <p className="text-xs text-gray-500 uppercase tracking-wider">Score Breakdown</p>
+                                    {parsedBreakdown.disabledComponents.length > 0 && (
+                                        <span className="inline-flex items-center gap-1 text-[10px] text-amber-500 bg-amber-950/30 border border-amber-900/50 rounded-full px-2 py-0.5">
+                                            <XCircle className="w-2.5 h-2.5" />
+                                            {parsedBreakdown.disabledComponents.join(', ')} disabled · weights redistributed
+                                        </span>
+                                    )}
+                                </div>
                                 <span className="text-xs font-mono">
-                                    <span className={score >= 70 ? 'text-emerald-400' : score >= 45 ? 'text-yellow-400' : 'text-red-400'}>
+                                    <span className={scoreColorClass}>
                                         {parsedBreakdown.finalScore !== null ? parsedBreakdown.finalScore.toFixed(1) : score.toFixed(1)}
                                     </span>
-                                    {parsedBreakdown.totalMax > 0 && (
-                                        <span className="text-gray-600"> / {parsedBreakdown.totalMax} pts</span>
-                                    )}
+                                    <span className="text-gray-600"> / {parsedBreakdown.totalMax > 0 ? parsedBreakdown.totalMax : 100} pts</span>
                                 </span>
                             </div>
 
@@ -1109,31 +1034,26 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                 {parsedBreakdown.scoredRows.map(row => {
                                     const isNegative = row.contribution < 0
                                     const isDrugLikeness = row.key === 'drug_likeness'
+                                    const rowColorClass = isNegative
+                                        ? 'text-red-400'
+                                        : row.maxPossible > 0
+                                            ? row.pct >= 70 ? 'text-emerald-400' : row.pct >= 40 ? 'text-yellow-400' : 'text-red-400'
+                                            : 'text-gray-400'
 
                                     return (
                                         <div key={row.key}>
-                                            {/* Row label + pts */}
                                             <div className="flex justify-between text-xs mb-1 items-center">
                                                 <span className="text-gray-500 capitalize flex items-center">
                                                     {row.key.replace(/_/g, ' ')}
                                                     {BREAKDOWN_TIPS[row.key] && <Tip text={BREAKDOWN_TIPS[row.key]} />}
                                                 </span>
-                                                <span className={`font-mono ${isNegative
-                                                        ? 'text-red-400'
-                                                        : row.maxPossible > 0
-                                                            ? row.pct >= 70 ? 'text-emerald-400' : row.pct >= 40 ? 'text-yellow-400' : 'text-red-400'
-                                                            : 'text-gray-400'
-                                                    }`}>
-                                                    {row.contribution % 1 === 0
-                                                        ? row.contribution.toFixed(0)
-                                                        : row.contribution.toFixed(1)}
+                                                <span className={`font-mono ${rowColorClass}`}>
+                                                    {row.contribution % 1 === 0 ? row.contribution.toFixed(0) : row.contribution.toFixed(1)}
                                                     {row.maxPossible > 0
                                                         ? <span className="text-gray-600"> / {row.maxPossible} pts</span>
                                                         : <span className="text-gray-700"> pts</span>}
                                                 </span>
                                             </div>
-
-                                            {/* Progress bar */}
                                             {row.maxPossible > 0 && !isNegative && (
                                                 <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden mb-1.5">
                                                     <div className={`h-full rounded-full transition-all ${row.pct >= 70 ? 'bg-emerald-600' : row.pct >= 40 ? 'bg-yellow-600' : 'bg-red-700'}`} style={{ width: `${row.pct}%` }} />
@@ -1144,8 +1064,6 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                                     <div className="h-full rounded-full bg-red-800 transition-all" style={{ width: `${Math.min(Math.abs(row.contribution) * 2, 100)}%` }} />
                                                 </div>
                                             )}
-
-                                            {/* Raw value */}
                                             {row.raw && (
                                                 isDrugLikeness
                                                     ? <DrugLikenessChips raw={row.raw} />
@@ -1156,7 +1074,7 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                 })}
                             </div>
 
-                            {/* Binding prefilter gate info pill */}
+                            {/* Gate row */}
                             {parsedBreakdown.gateRow && (
                                 <div className="mt-3 flex items-center gap-2 px-2.5 py-2 rounded-lg border border-gray-700/60 bg-gray-800/30">
                                     <Filter className="w-3 h-3 text-gray-600 flex-shrink-0" />
@@ -1169,13 +1087,6 @@ export default function MoleculeCard({ compound, jobId, index }: MoleculeCardPro
                                     </div>
                                     <span className="ml-auto text-[10px] text-gray-700 flex-shrink-0">gate only · 0 pts</span>
                                 </div>
-                            )}
-
-                            {/* Disabled components notice */}
-                            {parsedBreakdown.disabledComponents.length > 0 && (
-                                <p className="text-[10px] text-gray-700 mt-2">
-                                    Disabled: {parsedBreakdown.disabledComponents.join(', ')} — weight redistributed to active components.
-                                </p>
                             )}
 
                             {/* MW fragment penalty notice */}
