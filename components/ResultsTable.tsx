@@ -69,12 +69,49 @@ const DIFFICULTY_COLOR: Record<string, string> = {
 const SCORING_GUIDE = [
     {
         metric: "Overall Score (0–100)",
-        description: "A weighted composite of binding strength, safety, solubility, and synthesizability.",
+        description: "A weighted composite of binding strength, safety, drug-likeness, and synthesizability. Weights: Docking 50 pts · ADMET Safety 25 pts · Drug-likeness 15 pts · Synthesis Ease 10 pts. When a pipeline step is disabled, its weight is redistributed proportionally to active steps.",
         ranges: [
             { range: "80–100", label: "Exceptional", color: "text-emerald-400", note: "Ready for in-vitro testing" },
             { range: "60–79", label: "Strong", color: "text-yellow-400", note: "Minor optimization needed" },
             { range: "40–59", label: "Moderate", color: "text-orange-400", note: "Significant issues present" },
             { range: "0–39", label: "Poor", color: "text-red-400", note: "Fails critical drug-like criteria" },
+        ],
+    },
+    {
+        metric: "Docking Affinity (kcal/mol) — 50 pts",
+        description: "How tightly the drug molecule binds to the target protein's active site. More negative = stronger binding. Calculated using AutoDock Vina molecular simulation. Normalised from −3 (no binding) to −12 kcal/mol (exceptional).",
+        ranges: [
+            { range: "≤ −9.0", label: "Outstanding", color: "text-emerald-400", note: "Exceptionally strong binder" },
+            { range: "−7.0 to −8.9", label: "Strong", color: "text-emerald-400", note: "Good clinical candidate" },
+            { range: "−5.0 to −6.9", label: "Moderate", color: "text-yellow-400", note: "Needs optimization" },
+            { range: "> −5.0", label: "Weak", color: "text-red-400", note: "Poor to no binding" },
+        ],
+    },
+    {
+        metric: "ADMET Safety — 25 pts",
+        description: "Absorption, Distribution, Metabolism, Excretion, Toxicity profile. Starts from a risk-based base score (low=100%, moderate=55%, high=0%) then deducts per-flag penalties. hERG and Hepatotoxicity flags apply a ×2 multiplier due to clinical severity.",
+        ranges: [
+            { range: "Low risk, 0 flags", label: "Full score", color: "text-emerald-400", note: "25 pts" },
+            { range: "Moderate risk", label: "Reduced", color: "text-yellow-400", note: "~14 pts base" },
+            { range: "High risk", label: "Zero", color: "text-red-400", note: "0 pts — automatic fail" },
+        ],
+    },
+    {
+        metric: "Drug-likeness — 15 pts",
+        description: "Weighted combination: Lipinski violations (50%) + LogS aqueous solubility (30%) + LogP optimality (20%). A molecule needs to dissolve and cross membranes to reach its target.",
+        ranges: [
+            { range: "0 violations, LogS ≥ −3", label: "Excellent", color: "text-emerald-400", note: "~15 pts" },
+            { range: "1 violation, LogS −3 to −4", label: "Good", color: "text-yellow-400", note: "~11 pts" },
+            { range: "2+ violations, LogS < −5", label: "Poor", color: "text-red-400", note: "< 8 pts" },
+        ],
+    },
+    {
+        metric: "Synthesis Ease — 10 pts",
+        description: "How feasible it is to manufacture this molecule. Combines SA Score complexity (60%) + step count penalty (40%). Infeasible routes score 0.",
+        ranges: [
+            { range: "SA ≤ 3.5, ≤ 2 steps", label: "Easy", color: "text-emerald-400", note: "~10 pts" },
+            { range: "SA 3.5–5.0, 3–5 steps", label: "Moderate", color: "text-yellow-400", note: "~6–8 pts" },
+            { range: "SA > 6.0 or infeasible", label: "Hard/Fail", color: "text-red-400", note: "0–3 pts" },
         ],
     },
     {
@@ -101,10 +138,11 @@ const SCORING_GUIDE = [
         metric: "Aqueous Solubility (LogS)",
         description: "How well the drug dissolves in water/blood. Poor solubility is a top reason drugs fail in clinical trials. Estimated using the ESOL (Delaney) model.",
         ranges: [
-            { range: "> 0.0", label: "High", color: "text-emerald-400", note: "Dissolves freely in blood" },
-            { range: "0.0 to −2.0", label: "Medium", color: "text-yellow-400", note: "Adequate for most formulations" },
-            { range: "−2.0 to −4.0", label: "Low", color: "text-orange-400", note: "May need special formulation" },
-            { range: "< −4.0", label: "Very Low", color: "text-red-400", note: "High absorption failure risk" },
+            { range: "> −1.0", label: "Very High", color: "text-emerald-400", note: "Dissolves freely — perfect score" },
+            { range: "−1.0 to −3.0", label: "High", color: "text-emerald-400", note: "Excellent for oral delivery" },
+            { range: "−3.0 to −4.0", label: "Good", color: "text-yellow-400", note: "Adequate for most formulations" },
+            { range: "−4.0 to −5.0", label: "Borderline", color: "text-orange-400", note: "May need special formulation" },
+            { range: "< −5.0", label: "Poor / Insoluble", color: "text-red-400", note: "High absorption failure risk" },
         ],
     },
     {
@@ -840,6 +878,7 @@ export default function ResultsTable({ results }: ResultsTableProps) {
                     <div className="flex items-center gap-2 mb-1">
                         <Trophy className="w-4 h-4 text-yellow-400" />
                         <p className="text-sm font-medium text-gray-200">Top Candidate</p>
+                        {/* ✅ FIX: score is already normalised to 100 by backend scorer */}
                         <span className={`text-sm font-bold ${getScoreColor(sorted[0].final_score ?? 0)}`}>
                             {sorted[0].final_score?.toFixed(1)} / 100
                         </span>
@@ -963,8 +1002,7 @@ export default function ResultsTable({ results }: ResultsTableProps) {
 
                         <div className="px-5 pt-4 pb-2">
                             <p className="text-xs text-gray-500 leading-relaxed">
-                                This pipeline evaluates drug candidates across multiple dimensions. Below is a plain-English
-                                explanation of every metric and what the values mean for drug viability.
+                                This pipeline evaluates drug candidates across multiple dimensions. Weights: <span className="text-gray-400 font-medium">Docking 50 pts · ADMET Safety 25 pts · Drug-likeness 15 pts · Synthesis Ease 10 pts</span>. When a step is disabled, its weight redistributes proportionally to active steps, always summing to 100.
                             </p>
                         </div>
 
