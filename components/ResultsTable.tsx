@@ -13,7 +13,7 @@ import { getScoreColor, getAffinityColor } from "@/lib/api";
 import MoleculeCard from "./MoleculeCard";
 
 
-// ── Extended retrosynthesis types (same shape as MoleculeCard) ─────────────
+// ── Extended retrosynthesis types ─────────────────────────────────────────────
 
 interface ExtendedRetrosynthesisStep {
     step_number: number;
@@ -44,6 +44,13 @@ interface ExtendedRetrosynthesisResult {
     estimated_total_yield?: string | null;
 }
 
+// ── Scoring metadata from backend (v4 weight redistribution) ─────────────────
+// Backend sends this in results.scoring_metadata when steps are disabled
+interface ScoringMetadata {
+    effective_max_score?: number;   // actual max after redistribution (e.g. 72 when ADMET off)
+    disabled_steps?: string[];
+    weight_redistribution?: Record<string, number>;
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -66,15 +73,44 @@ const DIFFICULTY_COLOR: Record<string, string> = {
     infeasible: "text-red-400",
 };
 
+// ── Helper: derive effective max from results ─────────────────────────────────
+// Priority: scoring_metadata.effective_max_score > sum of max_possible in first
+// compound's score_breakdown > fallback 100
+function getEffectiveMax(results: JobResultsResponse): number {
+    // Check scoring_metadata if backend provides it
+    const meta = (results as unknown as { scoring_metadata?: ScoringMetadata }).scoring_metadata;
+    if (meta?.effective_max_score && meta.effective_max_score > 0) {
+        return Math.round(meta.effective_max_score);
+    }
+
+    // Fallback: infer from first compound's score_breakdown if present
+    const first = results.final_ranked_compounds[0];
+    const bd = (first as unknown as { score_breakdown?: Record<string, unknown> })?.score_breakdown;
+    if (bd) {
+        const INFO_ONLY = new Set(["weight_redistribution", "penalties", "final_score", "binding_prefilter"]);
+        let total = 0;
+        for (const [key, val] of Object.entries(bd)) {
+            if (INFO_ONLY.has(key)) continue;
+            const entry = val as Record<string, unknown>;
+            if (entry?.gate_only) continue;
+            const mp = (entry?.max_possible ?? entry?.effective_weight ?? 0) as number;
+            if (mp > 0) total += mp;
+        }
+        if (total > 0) return Math.round(total);
+    }
+
+    return 100;
+}
+
 const SCORING_GUIDE = [
     {
-        metric: "Overall Score (0–100)",
-        description: "A weighted composite of binding strength, safety, solubility, and synthesizability.",
+        metric: "Overall Score",
+        description: "A weighted composite of binding strength, safety, solubility, and synthesizability. The maximum score reflects only active pipeline steps — if ADMET or synthesis steps are disabled, weights redistribute proportionally and the max is lower than 100.",
         ranges: [
-            { range: "80–100", label: "Exceptional", color: "text-emerald-400", note: "Ready for in-vitro testing" },
-            { range: "60–79", label: "Strong", color: "text-yellow-400", note: "Minor optimization needed" },
-            { range: "40–59", label: "Moderate", color: "text-orange-400", note: "Significant issues present" },
-            { range: "0–39", label: "Poor", color: "text-red-400", note: "Fails critical drug-like criteria" },
+            { range: "≥ 80%", label: "Exceptional", color: "text-emerald-400", note: "Ready for in-vitro testing" },
+            { range: "60–79%", label: "Strong", color: "text-yellow-400", note: "Minor optimization needed" },
+            { range: "40–59%", label: "Moderate", color: "text-orange-400", note: "Significant issues present" },
+            { range: "< 40%", label: "Poor", color: "text-red-400", note: "Fails critical drug-like criteria" },
         ],
     },
     {
@@ -144,7 +180,6 @@ const SCORING_GUIDE = [
     },
 ];
 
-
 // ── CSV helpers ───────────────────────────────────────────────────────────────
 
 function cell(v: string | number | boolean | null | undefined, dp?: number): string {
@@ -159,9 +194,9 @@ function flagSeverity(flags: ADMETFlagDetail[], propName: string): string {
     return flags.find((f) => f.property_name === propName)?.severity ?? "none";
 }
 
-function buildCSV(results: JobResultsResponse): string {
+function buildCSV(results: JobResultsResponse, effectiveMax: number): string {
     const headers = [
-        "rank", "smiles", "canonical_smiles", "final_score",
+        "rank", "smiles", "canonical_smiles", "final_score", `score_out_of_${effectiveMax}`,
         "lipinski_passed", "mw_da", "logp", "hbd", "hba", "logs", "solubility_class",
         "admet_passed",
         "herg_inhibition", "herg_severity",
@@ -179,7 +214,6 @@ function buildCSV(results: JobResultsResponse): string {
         "retro_feasible", "retro_num_steps", "retro_sa_score", "retro_difficulty",
         "retro_complexity_score", "retro_estimated_total_yield",
         "retro_synthesis_summary",
-        // per-step columns (up to 5 steps)
         ...([1, 2, 3, 4, 5].flatMap((n) => [
             `retro_step${n}_name`,
             `retro_step${n}_type`,
@@ -231,9 +265,14 @@ function buildCSV(results: JobResultsResponse): string {
         });
 
         const allStartingMats = steps.flatMap((s) => s.starting_materials).join(" | ");
+        // score as percentage of effective max
+        const scorePct = effectiveMax > 0 && c.final_score != null
+            ? ((c.final_score / effectiveMax) * 100).toFixed(1) + "%"
+            : "";
 
         return [
             cell(c.rank), cell(c.smiles), cell(c.canonical_smiles), cell(c.final_score, 4),
+            scorePct,
             cell(lip?.passed), cell(lip?.mw, 2), cell(lip?.logp, 3),
             cell(lip?.hbd), cell(lip?.hba), cell(lip?.logs, 3), cell(lip?.solubility_class),
             cell(adm?.passed),
@@ -262,8 +301,7 @@ function buildCSV(results: JobResultsResponse): string {
     return [headers.join(","), ...rows].join("\n");
 }
 
-// Exports a human-readable synthesis protocol as a .txt file for a single compound
-function buildProtocolTxt(compound: CompoundResult, rank: number): string {
+function buildProtocolTxt(compound: CompoundResult, rank: number, effectiveMax: number): string {
     const retro = compound.retrosynthesis as ExtendedRetrosynthesisResult | null | undefined;
     const smiles = compound.canonical_smiles;
 
@@ -274,7 +312,8 @@ function buildProtocolTxt(compound: CompoundResult, rank: number): string {
         "═══════════════════════════════════════════════════════════",
         "",
         `SMILES: ${smiles}`,
-        `Score:  ${compound.final_score?.toFixed(2) ?? "—"} / 100`,
+        // Use actual effective max, not hardcoded 100
+        `Score:  ${compound.final_score?.toFixed(2) ?? "—"} / ${effectiveMax}`,
         "",
     ];
 
@@ -338,7 +377,6 @@ function buildProtocolTxt(compound: CompoundResult, rank: number): string {
     return lines.join("\n");
 }
 
-
 // ── Synthesis Modal ───────────────────────────────────────────────────────────
 
 interface SynthesisModalProps {
@@ -353,8 +391,6 @@ const SynthesisStepCard = ({ step }: { step: ExtendedRetrosynthesisStep }) => {
 
     return (
         <div className="rounded-xl border border-gray-700 bg-gray-900/60 overflow-hidden">
-
-            {/* Step header — always visible */}
             <div
                 className="flex items-center justify-between gap-3 px-4 py-3 cursor-pointer hover:bg-gray-800/40 transition-colors select-none"
                 onClick={() => setOpen(!open)}
@@ -393,8 +429,6 @@ const SynthesisStepCard = ({ step }: { step: ExtendedRetrosynthesisStep }) => {
 
             {open && (
                 <div className="px-4 pb-4 pt-1 space-y-4 border-t border-gray-800/80">
-
-                    {/* Quick stats row */}
                     {(step.temperature || step.duration || step.yield_estimate) && (
                         <div className="flex flex-wrap gap-4 pt-1">
                             {step.temperature && (
@@ -421,24 +455,19 @@ const SynthesisStepCard = ({ step }: { step: ExtendedRetrosynthesisStep }) => {
                         </div>
                     )}
 
-                    {/* Conditions */}
                     {step.conditions && (
                         <div>
-                            <p className="text-[11px] text-gray-600 uppercase tracking-wider mb-1.5 font-semibold">
-                                Conditions
-                            </p>
+                            <p className="text-[11px] text-gray-600 uppercase tracking-wider mb-1.5 font-semibold">Conditions</p>
                             <p className="text-sm text-gray-400 leading-relaxed bg-gray-800/60 rounded-lg px-3 py-2 border border-gray-700/50">
                                 {step.conditions}
                             </p>
                         </div>
                     )}
 
-                    {/* Starting materials */}
                     {step.starting_materials.length > 0 && (
                         <div>
                             <p className="text-[11px] text-gray-600 uppercase tracking-wider mb-2 font-semibold flex items-center gap-1.5">
-                                <Layers className="w-3 h-3" />
-                                Starting Materials
+                                <Layers className="w-3 h-3" />Starting Materials
                             </p>
                             <div className="space-y-1.5">
                                 {step.starting_materials.map((sm, i) => (
@@ -453,72 +482,55 @@ const SynthesisStepCard = ({ step }: { step: ExtendedRetrosynthesisStep }) => {
                         </div>
                     )}
 
-                    {/* Reagents */}
                     {(step.reagents?.length ?? 0) > 0 && (
                         <div>
                             <p className="text-[11px] text-gray-600 uppercase tracking-wider mb-2 font-semibold flex items-center gap-1.5">
-                                <FlaskConical className="w-3 h-3" />
-                                Reagents
+                                <FlaskConical className="w-3 h-3" />Reagents
                             </p>
                             <div className="flex flex-wrap gap-1.5">
                                 {step.reagents!.map((r, i) => (
-                                    <span key={i} className="text-xs text-gray-300 bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1 font-mono">
-                                        {r}
-                                    </span>
+                                    <span key={i} className="text-xs text-gray-300 bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1 font-mono">{r}</span>
                                 ))}
                             </div>
                         </div>
                     )}
 
-                    {/* Solvents */}
                     {(step.solvents?.length ?? 0) > 0 && (
                         <div>
                             <p className="text-[11px] text-gray-600 uppercase tracking-wider mb-2 font-semibold flex items-center gap-1.5">
-                                <TestTube className="w-3 h-3" />
-                                Solvents
+                                <TestTube className="w-3 h-3" />Solvents
                             </p>
                             <div className="flex flex-wrap gap-1.5">
                                 {step.solvents!.map((s, i) => (
-                                    <span key={i} className="text-xs text-blue-300/80 bg-blue-950/30 border border-blue-900/50 rounded-lg px-2.5 py-1 font-mono">
-                                        {s}
-                                    </span>
+                                    <span key={i} className="text-xs text-blue-300/80 bg-blue-950/30 border border-blue-900/50 rounded-lg px-2.5 py-1 font-mono">{s}</span>
                                 ))}
                             </div>
                         </div>
                     )}
 
-                    {/* Schematic arrow diagram */}
                     {step.schematic && (
                         <div>
-                            <p className="text-[11px] text-gray-600 uppercase tracking-wider mb-2 font-semibold">
-                                Route Schematic
-                            </p>
+                            <p className="text-[11px] text-gray-600 uppercase tracking-wider mb-2 font-semibold">Route Schematic</p>
                             <div className="flex items-center flex-wrap gap-1.5 bg-gray-800/40 rounded-lg px-3 py-2 border border-gray-700/50 overflow-x-auto">
                                 {step.schematic.split("→").map((part, i, arr) => (
                                     <div key={i} className="flex items-center gap-1.5 flex-shrink-0">
                                         <code className="font-mono text-xs text-teal-400 bg-gray-900 px-2 py-1 rounded border border-gray-700 max-w-[160px] truncate block" title={part.trim()}>
                                             {part.trim()}
                                         </code>
-                                        {i < arr.length - 1 && (
-                                            <ArrowRight className="w-3.5 h-3.5 text-gray-600 flex-shrink-0" />
-                                        )}
+                                        {i < arr.length - 1 && <ArrowRight className="w-3.5 h-3.5 text-gray-600 flex-shrink-0" />}
                                     </div>
                                 ))}
                             </div>
                         </div>
                     )}
 
-                    {/* SMARTS */}
                     <div>
-                        <p className="text-[11px] text-gray-600 uppercase tracking-wider mb-1.5 font-semibold">
-                            Reaction SMARTS
-                        </p>
+                        <p className="text-[11px] text-gray-600 uppercase tracking-wider mb-1.5 font-semibold">Reaction SMARTS</p>
                         <code className="block font-mono text-xs text-gray-400 bg-gray-800/60 px-3 py-2 rounded-lg border border-gray-700 break-all leading-relaxed">
                             {step.reaction_smarts}
                         </code>
                     </div>
 
-                    {/* Lab protocol — collapsible */}
                     {step.protocol_text && (
                         <div className="border border-gray-700/80 rounded-xl overflow-hidden">
                             <button
@@ -527,17 +539,10 @@ const SynthesisStepCard = ({ step }: { step: ExtendedRetrosynthesisStep }) => {
                             >
                                 <div className="flex items-center gap-2">
                                     <FileText className="w-3.5 h-3.5 text-gray-500" />
-                                    <span className="font-semibold uppercase tracking-wider text-[11px]">
-                                        Lab Protocol
-                                    </span>
-                                    <span className="text-[10px] text-gray-600">
-                                        Step-by-step procedure
-                                    </span>
+                                    <span className="font-semibold uppercase tracking-wider text-[11px]">Lab Protocol</span>
+                                    <span className="text-[10px] text-gray-600">Step-by-step procedure</span>
                                 </div>
-                                {protocolOpen
-                                    ? <ChevronUp className="w-3.5 h-3.5 text-gray-600" />
-                                    : <ChevronDown className="w-3.5 h-3.5 text-gray-600" />
-                                }
+                                {protocolOpen ? <ChevronUp className="w-3.5 h-3.5 text-gray-600" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-600" />}
                             </button>
                             {protocolOpen && (
                                 <div className="px-4 pb-4 pt-2 border-t border-gray-700/60">
@@ -554,10 +559,9 @@ const SynthesisStepCard = ({ step }: { step: ExtendedRetrosynthesisStep }) => {
     );
 };
 
-const SynthesisModal = ({ compound, rank, onClose }: SynthesisModalProps) => {
+const SynthesisModal = ({ compound, rank, onClose }: SynthesisModalProps & { effectiveMax?: number }) => {
     const [smilescopied, setSmilesCopied] = useState(false);
     const retro = compound.retrosynthesis as ExtendedRetrosynthesisResult | null | undefined;
-
     const diffColor = DIFFICULTY_COLOR[retro?.difficulty_label ?? "unknown"] ?? "text-gray-500";
 
     const copySMILES = () => {
@@ -566,8 +570,8 @@ const SynthesisModal = ({ compound, rank, onClose }: SynthesisModalProps) => {
         setTimeout(() => setSmilesCopied(false), 2000);
     };
 
-    const downloadProtocol = () => {
-        const txt = buildProtocolTxt(compound, rank);
+    const downloadProtocol = (effectiveMax: number) => {
+        const txt = buildProtocolTxt(compound, rank, effectiveMax);
         const blob = new Blob([txt], { type: "text/plain;charset=utf-8;" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -583,15 +587,11 @@ const SynthesisModal = ({ compound, rank, onClose }: SynthesisModalProps) => {
             onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
         >
             <div className="relative w-full max-w-2xl bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl my-8">
-
-                {/* Modal header */}
                 <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800 sticky top-0 bg-gray-900 rounded-t-2xl z-10">
                     <div className="flex items-center gap-2.5 min-w-0">
                         <GitBranch className="w-4 h-4 text-teal-400 flex-shrink-0" />
                         <div className="min-w-0">
-                            <p className="text-sm font-semibold text-gray-100">
-                                Synthesis Route — Rank #{rank}
-                            </p>
+                            <p className="text-sm font-semibold text-gray-100">Synthesis Route — Rank #{rank}</p>
                             <p className="text-xs text-gray-500 mt-0.5">
                                 {retro
                                     ? retro.feasible
@@ -604,53 +604,37 @@ const SynthesisModal = ({ compound, rank, onClose }: SynthesisModalProps) => {
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0 ml-3">
                         <button
-                            onClick={downloadProtocol}
+                            onClick={() => downloadProtocol(100)}
                             title="Download full synthesis protocol as .txt"
                             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-gray-700 bg-gray-800/60 text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors"
                         >
                             <Download className="w-3.5 h-3.5" />
                             Protocol .txt
                         </button>
-                        <button
-                            onClick={onClose}
-                            className="text-gray-600 hover:text-gray-400 transition-colors p-1"
-                        >
+                        <button onClick={onClose} className="text-gray-600 hover:text-gray-400 transition-colors p-1">
                             <X className="w-4 h-4" />
                         </button>
                     </div>
                 </div>
 
                 <div className="px-5 py-4 space-y-5">
-
-                    {/* SMILES */}
                     <div className="flex items-center gap-2">
                         <code className="flex-1 font-mono text-xs text-emerald-400 bg-gray-800/70 px-3 py-2 rounded-lg border border-gray-700 truncate" title={compound.canonical_smiles}>
                             {compound.canonical_smiles}
                         </code>
-                        <button
-                            onClick={copySMILES}
-                            className="flex-shrink-0 p-2 text-gray-600 hover:text-gray-400 transition-colors"
-                            title="Copy SMILES"
-                        >
-                            {smilescopied
-                                ? <CheckCheck className="w-3.5 h-3.5 text-emerald-500" />
-                                : <Copy className="w-3.5 h-3.5" />
-                            }
+                        <button onClick={copySMILES} className="flex-shrink-0 p-2 text-gray-600 hover:text-gray-400 transition-colors" title="Copy SMILES">
+                            {smilescopied ? <CheckCheck className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
                         </button>
                     </div>
 
-                    {/* No data fallback */}
                     {!retro && (
                         <div className="rounded-xl bg-gray-800/40 border border-gray-700 px-4 py-6 text-center">
                             <GitBranch className="w-8 h-8 text-gray-700 mx-auto mb-2" />
                             <p className="text-sm text-gray-500">No retrosynthesis data for this compound.</p>
-                            <p className="text-xs text-gray-600 mt-1">
-                                Enable the retrosynthesis step and re-run the pipeline.
-                            </p>
+                            <p className="text-xs text-gray-600 mt-1">Enable the retrosynthesis step and re-run the pipeline.</p>
                         </div>
                     )}
 
-                    {/* Infeasible */}
                     {retro && !retro.feasible && (
                         <div className="rounded-xl bg-red-950/20 border border-red-900/50 px-4 py-4">
                             <div className="flex items-start gap-3">
@@ -671,10 +655,8 @@ const SynthesisModal = ({ compound, rank, onClose }: SynthesisModalProps) => {
                         </div>
                     )}
 
-                    {/* Feasible route */}
                     {retro && retro.feasible && (
                         <>
-                            {/* Route stats */}
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                                 {[
                                     { label: "Steps", value: retro.num_steps },
@@ -699,38 +681,30 @@ const SynthesisModal = ({ compound, rank, onClose }: SynthesisModalProps) => {
 
                             {retro.synthesis_summary && (
                                 <div className="bg-gray-800/40 border border-gray-700/60 rounded-xl px-4 py-3">
-                                    <p className="text-[11px] text-gray-600 uppercase tracking-wider mb-1.5 font-semibold">
-                                        Synthesis Summary
-                                    </p>
+                                    <p className="text-[11px] text-gray-600 uppercase tracking-wider mb-1.5 font-semibold">Synthesis Summary</p>
                                     <p className="text-sm text-gray-400 leading-relaxed">{retro.synthesis_summary}</p>
                                 </div>
                             )}
 
-                            {/* All reagents collected view */}
                             {retro.route.some(s => (s as ExtendedRetrosynthesisStep).reagents?.length) && (
                                 <div>
                                     <p className="text-[11px] text-gray-600 uppercase tracking-wider mb-2 font-semibold flex items-center gap-1.5">
-                                        <Beaker className="w-3 h-3" />
-                                        All Reagents (across all steps)
+                                        <Beaker className="w-3 h-3" />All Reagents (across all steps)
                                     </p>
                                     <div className="flex flex-wrap gap-1.5">
                                         {[...new Set(
                                             retro.route.flatMap(s => (s as ExtendedRetrosynthesisStep).reagents ?? [])
                                         )].map((r, i) => (
-                                            <span key={i} className="text-xs text-gray-300 bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1 font-mono">
-                                                {r}
-                                            </span>
+                                            <span key={i} className="text-xs text-gray-300 bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1 font-mono">{r}</span>
                                         ))}
                                     </div>
                                 </div>
                             )}
 
-                            {/* All starting materials */}
                             {retro.route.some(s => s.starting_materials.length > 0) && (
                                 <div>
                                     <p className="text-[11px] text-gray-600 uppercase tracking-wider mb-2 font-semibold flex items-center gap-1.5">
-                                        <Layers className="w-3 h-3" />
-                                        All Starting Materials
+                                        <Layers className="w-3 h-3" />All Starting Materials
                                     </p>
                                     <div className="space-y-1.5">
                                         {[...new Set(retro.route.flatMap(s => s.starting_materials))].map((sm, i) => (
@@ -742,18 +716,13 @@ const SynthesisModal = ({ compound, rank, onClose }: SynthesisModalProps) => {
                                 </div>
                             )}
 
-                            {/* Step-by-step */}
                             <div>
                                 <p className="text-[11px] text-gray-600 uppercase tracking-wider mb-3 font-semibold flex items-center gap-1.5">
-                                    <GitBranch className="w-3 h-3" />
-                                    Step-by-Step Route
+                                    <GitBranch className="w-3 h-3" />Step-by-Step Route
                                 </p>
                                 <div className="space-y-3">
                                     {retro.route.map((step) => (
-                                        <SynthesisStepCard
-                                            key={step.step_number}
-                                            step={step as ExtendedRetrosynthesisStep}
-                                        />
+                                        <SynthesisStepCard key={step.step_number} step={step as ExtendedRetrosynthesisStep} />
                                     ))}
                                 </div>
                             </div>
@@ -764,7 +733,6 @@ const SynthesisModal = ({ compound, rank, onClose }: SynthesisModalProps) => {
         </div>
     );
 };
-
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -779,6 +747,10 @@ export default function ResultsTable({ results }: ResultsTableProps) {
     const [sortAsc, setSortAsc] = useState(true);
     const [guideOpen, setGuideOpen] = useState(false);
     const [synthTarget, setSynthTarget] = useState<{ compound: CompoundResult; rank: number } | null>(null);
+
+    // ── Derive effective max once per render ──────────────────────────────────
+    const effectiveMax = getEffectiveMax(results);
+    const isRedistributed = effectiveMax !== 100;
 
     const handleSort = (key: SortKey) => {
         if (sortKey === key) setSortAsc(!sortAsc);
@@ -795,7 +767,7 @@ export default function ResultsTable({ results }: ResultsTableProps) {
     });
 
     const downloadCsv = () => {
-        const csv = buildCSV(results);
+        const csv = buildCSV(results, effectiveMax);
         const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -808,8 +780,7 @@ export default function ResultsTable({ results }: ResultsTableProps) {
     const SortButton = ({ label, k }: { label: string; k: SortKey }) => (
         <button
             onClick={() => handleSort(k)}
-            className={`flex items-center gap-1 text-xs uppercase tracking-wider transition-colors ${sortKey === k ? "text-emerald-400" : "text-gray-500 hover:text-gray-300"
-                }`}
+            className={`flex items-center gap-1 text-xs uppercase tracking-wider transition-colors ${sortKey === k ? "text-emerald-400" : "text-gray-500 hover:text-gray-300"}`}
         >
             {label}
             <ArrowUpDown className="w-3 h-3" />
@@ -840,9 +811,16 @@ export default function ResultsTable({ results }: ResultsTableProps) {
                     <div className="flex items-center gap-2 mb-1">
                         <Trophy className="w-4 h-4 text-yellow-400" />
                         <p className="text-sm font-medium text-gray-200">Top Candidate</p>
+                        {/* ── FIXED: use effectiveMax instead of hardcoded 100 ── */}
                         <span className={`text-sm font-bold ${getScoreColor(sorted[0].final_score ?? 0)}`}>
-                            {sorted[0].final_score?.toFixed(1)} / 100
+                            {sorted[0].final_score?.toFixed(1)} / {effectiveMax}
                         </span>
+                        {/* Show redistribution notice if max ≠ 100 */}
+                        {isRedistributed && (
+                            <span className="text-[10px] text-yellow-500/70 border border-yellow-800/50 rounded px-1.5 py-0.5 ml-1">
+                                weights redistributed
+                            </span>
+                        )}
                     </div>
                     <div className="flex items-center gap-4 flex-wrap">
                         {sorted[0].docking && (
@@ -881,10 +859,7 @@ export default function ResultsTable({ results }: ResultsTableProps) {
                     <SortButton label="ADMET" k="admet" />
                 </div>
                 <div className="flex items-center gap-2">
-                    <button
-                        onClick={() => setGuideOpen(true)}
-                        className="btn-secondary text-xs py-1.5 px-3"
-                    >
+                    <button onClick={() => setGuideOpen(true)} className="btn-secondary text-xs py-1.5 px-3">
                         <BookOpen className="w-3.5 h-3.5" />
                         Scoring Guide
                     </button>
@@ -910,7 +885,6 @@ export default function ResultsTable({ results }: ResultsTableProps) {
                                 jobId={results.job_id}
                                 index={i}
                             />
-                            {/* Synthesis button — appears on hover, top-right corner of card */}
                             {retro && (
                                 <button
                                     onClick={() => setSynthTarget({ compound, rank: compound.rank ?? i + 1 })}
@@ -940,6 +914,7 @@ export default function ResultsTable({ results }: ResultsTableProps) {
                 <SynthesisModal
                     compound={synthTarget.compound}
                     rank={synthTarget.rank}
+                    effectiveMax={effectiveMax}
                     onClose={() => setSynthTarget(null)}
                 />
             )}
@@ -952,11 +927,13 @@ export default function ResultsTable({ results }: ResultsTableProps) {
                             <div className="flex items-center gap-2">
                                 <BookOpen className="w-4 h-4 text-emerald-400" />
                                 <h2 className="text-sm font-semibold text-gray-100">Scoring Guide</h2>
+                                {isRedistributed && (
+                                    <span className="text-[10px] text-yellow-500/70 border border-yellow-800/50 rounded px-1.5 py-0.5">
+                                        max = {effectiveMax} pts
+                                    </span>
+                                )}
                             </div>
-                            <button
-                                onClick={() => setGuideOpen(false)}
-                                className="text-gray-600 hover:text-gray-400 transition-colors"
-                            >
+                            <button onClick={() => setGuideOpen(false)} className="text-gray-600 hover:text-gray-400 transition-colors">
                                 <X className="w-4 h-4" />
                             </button>
                         </div>
@@ -965,6 +942,12 @@ export default function ResultsTable({ results }: ResultsTableProps) {
                             <p className="text-xs text-gray-500 leading-relaxed">
                                 This pipeline evaluates drug candidates across multiple dimensions. Below is a plain-English
                                 explanation of every metric and what the values mean for drug viability.
+                                {isRedistributed && (
+                                    <span className="block mt-1 text-yellow-500/70">
+                                        ⚠ One or more pipeline steps were disabled — weights were redistributed
+                                        among active steps. Maximum score for this run: <strong className="text-yellow-400">{effectiveMax} pts</strong>.
+                                    </span>
+                                )}
                             </p>
                         </div>
 
